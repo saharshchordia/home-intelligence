@@ -1,0 +1,160 @@
+import { env } from "cloudflare:workers";
+import {
+  baselineEntities,
+  baselineEvent,
+  baselineEvidence,
+  baselineHome,
+  type Evidence,
+  type InspectionAssertion,
+  type MediaAsset,
+  type SourceDocument,
+  type TwinEntity,
+  type TwinEvent,
+  type TwinPayload,
+} from "../twin-data";
+
+export const schemaStatements = [
+  `CREATE TABLE IF NOT EXISTS homes (id TEXT PRIMARY KEY, name TEXT NOT NULL, location TEXT NOT NULL, acquired_at TEXT NOT NULL, year_built INTEGER NOT NULL, design TEXT NOT NULL, living_area_sq_ft INTEGER NOT NULL, lot_sq_ft INTEGER NOT NULL, room_count INTEGER NOT NULL, bedrooms INTEGER NOT NULL, bathrooms INTEGER NOT NULL, quality_rating TEXT NOT NULL, condition_rating TEXT NOT NULL, source_label TEXT NOT NULL, source_date TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS entities (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, group_name TEXT NOT NULL, condition TEXT NOT NULL, detail TEXT NOT NULL, source_page INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, occurred_at TEXT NOT NULL, title TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, condition_before TEXT, condition_after TEXT, cost_cents INTEGER, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS event_tags (event_id TEXT NOT NULL, entity_id TEXT NOT NULL, PRIMARY KEY (event_id, entity_id))`,
+  `CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, label TEXT NOT NULL, kind TEXT NOT NULL, source_ref TEXT NOT NULL, captured_at TEXT NOT NULL, visibility TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS event_evidence (event_id TEXT NOT NULL, evidence_id TEXT NOT NULL, PRIMARY KEY (event_id, evidence_id))`,
+  `CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, title TEXT NOT NULL, document_type TEXT NOT NULL, source_date TEXT NOT NULL, original_filename TEXT NOT NULL, mime_type TEXT NOT NULL, page_count INTEGER NOT NULL, object_key TEXT NOT NULL, sha256 TEXT NOT NULL, storage_status TEXT NOT NULL, visibility TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS assertions (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, document_id TEXT NOT NULL, report_item TEXT NOT NULL, source_page INTEGER NOT NULL, section TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, severity TEXT NOT NULL, temporal_status TEXT NOT NULL, review_status TEXT NOT NULL, extraction_confidence REAL NOT NULL, entity_confidence REAL NOT NULL, temporal_confidence REAL NOT NULL, location_rationale TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS assertion_entities (assertion_id TEXT NOT NULL, entity_id TEXT NOT NULL, relationship TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, rationale TEXT NOT NULL, reviewed_at TEXT, PRIMARY KEY (assertion_id, entity_id))`,
+  `CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, label TEXT NOT NULL, kind TEXT NOT NULL, source_page INTEGER NOT NULL, object_key TEXT NOT NULL, mime_type TEXT NOT NULL, sha256 TEXT NOT NULL, storage_status TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS assertion_evidence (assertion_id TEXT NOT NULL, media_id TEXT NOT NULL, PRIMARY KEY (assertion_id, media_id))`,
+  `CREATE TABLE IF NOT EXISTS review_decisions (id TEXT PRIMARY KEY, assertion_id TEXT NOT NULL, entity_id TEXT NOT NULL, decision TEXT NOT NULL, previous_status TEXT NOT NULL, next_status TEXT NOT NULL, note TEXT NOT NULL, decided_at TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS events_date_idx ON events(home_id, occurred_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS event_tags_entity_idx ON event_tags(entity_id, event_id)`,
+  `CREATE INDEX IF NOT EXISTS assertions_document_idx ON assertions(document_id, source_page)`,
+  `CREATE INDEX IF NOT EXISTS assertions_review_idx ON assertions(review_status, severity)`,
+  `CREATE INDEX IF NOT EXISTS assertion_entities_entity_idx ON assertion_entities(entity_id, status)`,
+  `CREATE INDEX IF NOT EXISTS media_assets_document_idx ON media_assets(document_id, source_page)`,
+];
+
+export function getD1() {
+  if (!env.DB) throw new Error("Home Intelligence database is unavailable.");
+  return env.DB;
+}
+
+export function getEvidenceBucket() {
+  const bucket = (env as unknown as { EVIDENCE_BUCKET?: R2Bucket }).EVIDENCE_BUCKET;
+  if (!bucket) throw new Error("Private evidence storage is unavailable.");
+  return bucket;
+}
+
+export async function runInChunks(statements: D1PreparedStatement[], size = 75) {
+  const db = getD1();
+  for (let index = 0; index < statements.length; index += size) {
+    await db.batch(statements.slice(index, index + size));
+  }
+}
+
+export async function ensureDatabase() {
+  const db = getD1();
+  await runInChunks(schemaStatements.map((sql) => db.prepare(sql)));
+
+  const statements = [
+    db.prepare("INSERT OR IGNORE INTO homes (id, name, location, acquired_at, year_built, design, living_area_sq_ft, lot_sq_ft, room_count, bedrooms, bathrooms, quality_rating, condition_rating, source_label, source_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      baselineHome.id, baselineHome.name, baselineHome.location, baselineHome.acquiredAt,
+      baselineHome.yearBuilt, baselineHome.design, baselineHome.livingAreaSqFt,
+      baselineHome.lotSqFt, baselineHome.roomCount, baselineHome.bedrooms,
+      baselineHome.bathrooms, baselineHome.qualityRating, baselineHome.conditionRating,
+      baselineHome.sourceLabel, baselineHome.sourceDate,
+    ),
+    ...baselineEntities.map((entity) => db.prepare("INSERT OR IGNORE INTO entities (id, home_id, name, kind, group_name, condition, detail, source_page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      entity.id, entity.homeId, entity.name, entity.kind, entity.groupName,
+      entity.condition, entity.detail, entity.sourcePage,
+    )),
+    ...baselineEvidence.map((item) => db.prepare("INSERT OR IGNORE INTO evidence (id, home_id, label, kind, source_ref, captured_at, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
+      item.id, item.homeId, item.label, item.kind, item.sourceRef, item.capturedAt, item.visibility,
+    )),
+    db.prepare("INSERT OR IGNORE INTO events (id, home_id, occurred_at, title, type, summary, condition_before, condition_after, cost_cents, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      baselineEvent.id, baselineEvent.homeId, baselineEvent.occurredAt, baselineEvent.title,
+      baselineEvent.type, baselineEvent.summary, baselineEvent.conditionBefore,
+      baselineEvent.conditionAfter, baselineEvent.costCents, baselineEvent.createdAt,
+    ),
+    ...baselineEvent.entityIds.map((entityId) => db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind(baselineEvent.id, entityId)),
+    ...baselineEvent.evidenceIds.map((evidenceId) => db.prepare("INSERT OR IGNORE INTO event_evidence (event_id, evidence_id) VALUES (?, ?)").bind(baselineEvent.id, evidenceId)),
+  ];
+  await runInChunks(statements);
+}
+
+export async function readTwin(): Promise<TwinPayload> {
+  await ensureDatabase();
+  const db = getD1();
+  const [homeResult, entityResult, eventResult, tagResult, evidenceResult, eventEvidenceResult, documentResult, assertionResult, assertionEntityResult, mediaResult, assertionEvidenceResult] = await Promise.all([
+    db.prepare("SELECT * FROM homes LIMIT 1").first<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM entities ORDER BY kind, group_name, name").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM events ORDER BY occurred_at DESC, created_at DESC").all<Record<string, unknown>>(),
+    db.prepare("SELECT event_id, entity_id FROM event_tags").all<Record<string, string>>(),
+    db.prepare("SELECT * FROM evidence ORDER BY captured_at DESC").all<Record<string, unknown>>(),
+    db.prepare("SELECT event_id, evidence_id FROM event_evidence").all<Record<string, string>>(),
+    db.prepare("SELECT * FROM documents ORDER BY source_date DESC").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM assertions ORDER BY source_page, report_item").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM assertion_entities").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM media_assets ORDER BY source_page, id").all<Record<string, unknown>>(),
+    db.prepare("SELECT assertion_id, media_id FROM assertion_evidence").all<Record<string, string>>(),
+  ]);
+
+  if (!homeResult) throw new Error("The home record could not be initialized.");
+  const homeRow = homeResult;
+  const home = {
+    id: String(homeRow.id), name: String(homeRow.name), location: String(homeRow.location),
+    acquiredAt: String(homeRow.acquired_at), yearBuilt: Number(homeRow.year_built),
+    design: String(homeRow.design), livingAreaSqFt: Number(homeRow.living_area_sq_ft),
+    lotSqFt: Number(homeRow.lot_sq_ft), roomCount: Number(homeRow.room_count),
+    bedrooms: Number(homeRow.bedrooms), bathrooms: Number(homeRow.bathrooms),
+    qualityRating: String(homeRow.quality_rating), conditionRating: String(homeRow.condition_rating),
+    sourceLabel: String(homeRow.source_label), sourceDate: String(homeRow.source_date),
+  };
+
+  const entities = entityResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), name: String(row.name),
+    kind: String(row.kind) as TwinEntity["kind"], groupName: String(row.group_name),
+    condition: String(row.condition), detail: String(row.detail), sourcePage: Number(row.source_page),
+  }));
+  const evidence = evidenceResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), label: String(row.label),
+    kind: String(row.kind), sourceRef: String(row.source_ref), capturedAt: String(row.captured_at),
+    visibility: String(row.visibility),
+  } satisfies Evidence));
+  const events = eventResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), occurredAt: String(row.occurred_at),
+    title: String(row.title), type: String(row.type), summary: String(row.summary),
+    conditionBefore: row.condition_before ? String(row.condition_before) : null,
+    conditionAfter: row.condition_after ? String(row.condition_after) : null,
+    costCents: row.cost_cents == null ? null : Number(row.cost_cents), createdAt: String(row.created_at),
+    entityIds: tagResult.results.filter((tag) => tag.event_id === row.id).map((tag) => tag.entity_id),
+    evidenceIds: eventEvidenceResult.results.filter((item) => item.event_id === row.id).map((item) => item.evidence_id),
+  } satisfies TwinEvent));
+  const documents = documentResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), title: String(row.title),
+    documentType: String(row.document_type), sourceDate: String(row.source_date),
+    originalFilename: String(row.original_filename), mimeType: String(row.mime_type),
+    pageCount: Number(row.page_count), storageStatus: String(row.storage_status),
+  } satisfies SourceDocument));
+  const mediaAssets = mediaResult.results.map((row) => ({
+    id: String(row.id), documentId: String(row.document_id), label: String(row.label),
+    kind: String(row.kind), sourcePage: Number(row.source_page), mimeType: String(row.mime_type),
+    storageStatus: String(row.storage_status),
+  } satisfies MediaAsset));
+  const assertions = assertionResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), documentId: String(row.document_id),
+    reportItem: String(row.report_item), sourcePage: Number(row.source_page), section: String(row.section),
+    title: String(row.title), detail: String(row.detail), severity: String(row.severity) as InspectionAssertion["severity"],
+    temporalStatus: String(row.temporal_status) as InspectionAssertion["temporalStatus"],
+    reviewStatus: String(row.review_status) as InspectionAssertion["reviewStatus"],
+    extractionConfidence: Number(row.extraction_confidence), entityConfidence: Number(row.entity_confidence),
+    temporalConfidence: Number(row.temporal_confidence), locationRationale: String(row.location_rationale),
+    entityLinks: assertionEntityResult.results.filter((link) => link.assertion_id === row.id).map((link) => ({
+      entityId: String(link.entity_id), relationship: String(link.relationship), confidence: Number(link.confidence),
+      status: String(link.status) as InspectionAssertion["entityLinks"][number]["status"], rationale: String(link.rationale),
+    })),
+    mediaIds: assertionEvidenceResult.results.filter((item) => item.assertion_id === row.id).map((item) => item.media_id),
+  } satisfies InspectionAssertion));
+
+  return { home, entities, events, evidence, documents, assertions, mediaAssets };
+}

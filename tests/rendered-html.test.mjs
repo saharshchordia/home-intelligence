@@ -16,6 +16,8 @@ test("ships the Home Intelligence product surface", async () => {
   assert.match(page, /<TwinDashboard initialTwin=\{baselineTwin\}/);
   assert.match(dashboard, /Home Intelligence/);
   assert.match(dashboard, /Add update/);
+  assert.match(dashboard, /Evidence review/);
+  assert.match(dashboard, /submitReview/);
   assert.match(dashboard, /fetch\("\/api\/twin"/);
   assert.match(layout, /A living, evidence-linked history of a home/);
   assert.match(baseline, /Acquisition appraisal baseline/);
@@ -30,12 +32,21 @@ test("includes persistence, documentation and the social preview", async () => {
   await Promise.all([
     access(new URL("public/og.png", root)),
     access(new URL("docs/architecture.md", root)),
+    access(new URL("app/api/import/inspection/route.ts", root)),
+    access(new URL("app/api/evidence/route.ts", root)),
+    access(new URL("app/api/review/route.ts", root)),
     access(new URL("LICENSE", root)),
   ]);
 });
 
 test("keeps private appraisal identifiers out of public source", async () => {
-  const publicBaseline = await readFile(new URL("lib/twin-data.ts", root), "utf8");
-  assert.doesNotMatch(publicBaseline, /borrower|parcel|tax amount|street address/i);
+  const [publicBaseline, importRoute, architecture] = await Promise.all([
+    readFile(new URL("lib/twin-data.ts", root), "utf8"),
+    readFile(new URL("app/api/import/inspection/route.ts", root), "utf8"),
+    readFile(new URL("docs/architecture.md", root), "utf8"),
+  ]);
+  const publicSource = `${publicBaseline}\n${importRoute}\n${architecture}`;
+  assert.doesNotMatch(publicSource, /borrower|parcel identifier|tax amount|2209 willow|saharsh chordia/i);
   assert.match(publicBaseline, /location: "Atlanta, Georgia"/);
+  assert.doesNotMatch(publicSource, /cockroach|termite damage|asbestos material/i);
 });

@@ -11,6 +11,8 @@ The included demo baseline is derived from a June 15, 2022 appraisal. Exact addr
 - Phase 3: an append-only timeline with condition changes, costs and evidence references
 - A responsive dashboard for browsing the home and recording new events
 - Cloudflare D1 persistence with a reproducible schema and seeded privacy-safe baseline
+- Private R2 storage for source reports and report-page imagery
+- Confidence-gated assertions with a human review queue for uncertain or safety-critical place links
 
 ## Run locally
 
@@ -33,13 +35,13 @@ npm test
 
 ## Data model
 
-The twin stores stable home entities separately from dated events. Events link to one or more entities through tags and can reference private evidence without placing source documents in the public repository.
+The twin stores stable home entities separately from dated events. Imported documents produce evidence-backed assertions before they become place links. Location confidence of 90% or greater may be accepted automatically, 75-89% requires review, and lower-confidence proposals remain unassigned. Safety findings always require review.
 
 See [docs/architecture.md](docs/architecture.md) for the model, privacy boundary and extension path.
 
 ## Privacy boundary
 
-Treat the repository as application source, not the evidence vault. Keep reports, invoices, photos, warranties and permits in private object storage. Commit only redacted or intentionally public metadata. The current release stores evidence references but does not upload files.
+Treat the repository as application source, not the evidence vault. Reports, report pages, photos, warranties and permits live in private object storage, with searchable provenance in D1. The one-time acquisition import manifest is generated outside the repository and is never committed.
 
 ## License
 

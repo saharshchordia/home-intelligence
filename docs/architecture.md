@@ -26,6 +26,13 @@ Every update is attached to one or more stable entity IDs. Entities currently us
 
 The taxonomy can grow without rewriting earlier events. A future floor-plan layer can map these same IDs to geometry.
 
+Place assignment is confidence-gated:
+
+- `>= 0.90`: may be accepted automatically when explicit report language and adjacent evidence agree
+- `0.75-0.89`: retained as a candidate until human review
+- `< 0.75`: not linked to a place; retain only at a confidently identified broad system or in the unassigned queue
+- safety-critical findings: human review is mandatory regardless of score
+
 ## Phase 3: event timeline
 
 Events are append-only records with an occurrence date, type, summary, condition after the event, optional cost, tags and evidence references. Corrections should be represented as a new event that supersedes an earlier assertion rather than silently changing history.
@@ -40,17 +47,22 @@ Cloudflare D1 stores structured records:
 - `event_tags`
 - `evidence`
 - `event_evidence`
+- `documents`
+- `assertions`
+- `assertion_entities`
+- `media_assets`
+- `assertion_evidence`
+- `review_decisions`
 
-The API creates the schema and privacy-safe baseline when the database is empty. Drizzle schema definitions generate deployment migrations.
+R2 stores original reports and private report-page images. D1 stores checksums, source dates, page references, confidence dimensions, candidate links and the append-only review audit. The API creates the schema and privacy-safe baseline idempotently, while Drizzle schema definitions generate deployment migrations.
 
 ## Privacy
 
-The public repository excludes exact address, owner names, parcel and tax identifiers, original appraisal pages and home photographs. Evidence records currently store references only. A later document phase should add private R2 storage, metadata extraction, redaction review and explicit access controls before uploads are enabled.
+The public repository excludes exact address, owner names, parcel and tax identifiers, original reports, extraction manifests and property photographs. Evidence bytes remain in the private R2 binding. The deployed site is private, and evidence responses are marked private and non-cacheable.
 
 ## Next extensions
 
-1. Private document and photo uploads with R2.
-2. Floor-plan geometry linked to existing entity IDs.
-3. Before-and-after photo pairs and condition scoring.
-4. Warranty, permit, contractor and appliance records.
-5. Reminders generated from maintenance intervals and observed condition.
+1. Floor-plan geometry linked to existing entity IDs.
+2. Before-and-after photo pairs and condition scoring.
+3. Warranty, permit, contractor and appliance records.
+4. Reminders generated from maintenance intervals and observed condition.
