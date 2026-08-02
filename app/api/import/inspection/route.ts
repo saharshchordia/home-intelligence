@@ -71,8 +71,8 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const manifestValue = form.get("manifest");
     const reportValue = form.get("report");
-    if (typeof manifestValue !== "string" || !(reportValue instanceof File)) {
-      return Response.json({ error: "A manifest and inspection report are required." }, { status: 400 });
+    if (typeof manifestValue !== "string") {
+      return Response.json({ error: "An inspection manifest is required." }, { status: 400 });
     }
 
     const manifest = JSON.parse(manifestValue) as InspectionManifest;
@@ -83,26 +83,36 @@ export async function POST(request: Request) {
       return Response.json({ error: "Evidence objects must use private storage keys." }, { status: 400 });
     }
 
-    const reportBytes = await reportValue.arrayBuffer();
-    const reportHash = await digestHex(reportBytes);
-    if (manifest.document.sha256 && manifest.document.sha256 !== reportHash) {
-      return Response.json({ error: "The inspection report checksum does not match the approved manifest." }, { status: 400 });
+    let reportHash = manifest.document.sha256;
+    if (reportValue instanceof File) {
+      const reportBytes = await reportValue.arrayBuffer();
+      reportHash = await digestHex(reportBytes);
+      if (manifest.document.sha256 && manifest.document.sha256 !== reportHash) {
+        return Response.json({ error: "The inspection report checksum does not match the approved manifest." }, { status: 400 });
+      }
+      await bucket.put(manifest.document.objectKey, reportBytes, {
+        httpMetadata: { contentType: manifest.document.mimeType },
+        customMetadata: { documentId: manifest.document.id, sourceDate: manifest.document.sourceDate },
+      });
+    } else if (!(await bucket.head(manifest.document.objectKey))) {
+      return Response.json({ error: "The private inspection report must be uploaded before importing its manifest." }, { status: 400 });
     }
-    await bucket.put(manifest.document.objectKey, reportBytes, {
-      httpMetadata: { contentType: manifest.document.mimeType },
-      customMetadata: { documentId: manifest.document.id, sourceDate: manifest.document.sourceDate },
-    });
 
+    const storedAssets = new Set<string>();
     for (const asset of manifest.mediaAssets) {
       const value = form.get(asset.fieldName);
-      if (!(value instanceof File)) continue;
-      const bytes = await value.arrayBuffer();
-      const hash = await digestHex(bytes);
-      if (asset.sha256 && asset.sha256 !== hash) throw new Error(`Checksum mismatch for ${asset.id}.`);
-      await bucket.put(asset.objectKey, bytes, {
-        httpMetadata: { contentType: asset.mimeType },
-        customMetadata: { documentId: manifest.document.id, sourcePage: String(asset.sourcePage) },
-      });
+      if (value instanceof File) {
+        const bytes = await value.arrayBuffer();
+        const hash = await digestHex(bytes);
+        if (asset.sha256 && asset.sha256 !== hash) throw new Error(`Checksum mismatch for ${asset.id}.`);
+        await bucket.put(asset.objectKey, bytes, {
+          httpMetadata: { contentType: asset.mimeType },
+          customMetadata: { documentId: manifest.document.id, sourcePage: String(asset.sourcePage) },
+        });
+        storedAssets.add(asset.id);
+      } else if (await bucket.head(asset.objectKey)) {
+        storedAssets.add(asset.id);
+      }
     }
 
     const createdAt = new Date().toISOString();
@@ -125,7 +135,7 @@ export async function POST(request: Request) {
     ];
 
     for (const asset of manifest.mediaAssets) {
-      const stored = form.get(asset.fieldName) instanceof File;
+      const stored = storedAssets.has(asset.id);
       statements.push(db.prepare("INSERT OR REPLACE INTO media_assets (id, document_id, label, kind, source_page, object_key, mime_type, sha256, storage_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
         asset.id, manifest.document.id, asset.label, asset.kind, asset.sourcePage, asset.objectKey,
         asset.mimeType, asset.sha256, stored ? "stored" : "referenced", createdAt,

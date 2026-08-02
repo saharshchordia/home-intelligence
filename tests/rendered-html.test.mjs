@@ -35,6 +35,7 @@ test("includes persistence, documentation and the social preview", async () => {
     access(new URL("app/api/import/inspection/route.ts", root)),
     access(new URL("app/api/evidence/route.ts", root)),
     access(new URL("app/api/review/route.ts", root)),
+    access(new URL("app/api/storage/route.ts", root)),
     access(new URL("LICENSE", root)),
   ]);
 });
