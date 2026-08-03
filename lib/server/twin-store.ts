@@ -68,6 +68,9 @@ export async function ensureDatabase() {
       entity.id, entity.homeId, entity.name, entity.kind, entity.groupName,
       entity.condition, entity.detail, entity.sourcePage,
     )),
+    db.prepare("UPDATE entities SET name = ?, detail = ? WHERE id = ?").bind("Upstairs hall bathroom", "The single upper-level hall bath sits at the end of the second-floor hallway.", "upstairs-hall-bathroom"),
+    db.prepare("UPDATE entities SET detail = ? WHERE id = ?").bind("Laundry is positioned near the rear entry on the first floor in the corrected acquisition sketch.", "laundry"),
+    db.prepare("UPDATE entities SET name = ?, detail = ? WHERE id = ?").bind("Upper-level bathroom (legacy)", "Legacy placeholder from the first draft model. Use Upstairs hall bathroom for new location tags.", "upper-level-bathroom"),
     ...baselineEvidence.map((item) => db.prepare("INSERT OR IGNORE INTO evidence (id, home_id, label, kind, source_ref, captured_at, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
       item.id, item.homeId, item.label, item.kind, item.sourceRef, item.capturedAt, item.visibility,
     )),

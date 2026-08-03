@@ -15,6 +15,7 @@ import {
   House,
   Layers3,
   MapPin,
+  Pencil,
   Plus,
   Ruler,
   Search,
@@ -35,6 +36,8 @@ const HouseModel = dynamic(() => import("./HouseModel"), { ssr: false });
 
 const tabs = ["Home model", "Overview", "Places", "Systems", "Timeline", "Evidence review"] as const;
 type Tab = (typeof tabs)[number];
+type ReviewDecision = "approve" | "reject" | "move" | "add" | "remove";
+type EvidenceFilter = "needs-review" | "accepted" | "all";
 
 const conditionTone: Record<string, string> = {
   C3: "green",
@@ -49,6 +52,7 @@ const conditionTone: Record<string, string> = {
 };
 
 const acceptedLinkStatuses = new Set(["auto-accepted", "approved"]);
+const retiredLocationIds = new Set(["upper-level-bathroom"]);
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00`));
@@ -70,6 +74,8 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [evidenceFilter, setEvidenceFilter] = useState<EvidenceFilter>("needs-review");
+  const [focusedAssertionId, setFocusedAssertionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,9 +86,11 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   }, []);
 
   const selectedEntity = twin.entities.find((entity) => entity.id === selectedEntityId) ?? twin.entities[0];
+  const locationEntities = useMemo(() => twin.entities.filter((entity) => entity.kind !== "system" && !retiredLocationIds.has(entity.id)), [twin.entities]);
   const visibleEntities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return twin.entities.filter((entity) => {
+      if (retiredLocationIds.has(entity.id)) return false;
       const tabMatch = activeTab === "Places" ? entity.kind !== "system" : activeTab === "Systems" ? entity.kind === "system" : true;
       const queryMatch = !normalizedQuery || `${entity.name} ${entity.groupName} ${entity.detail}`.toLowerCase().includes(normalizedQuery);
       return tabMatch && queryMatch;
@@ -101,6 +109,18 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   const pendingReviews = useMemo(() => twin.assertions.flatMap((assertion) =>
     assertion.entityLinks.filter((link) => link.status === "pending").map((link) => ({ assertion, link })),
   ), [twin.assertions]);
+  const reviewAssertions = useMemo(() => {
+    const filtered = twin.assertions.filter((assertion) => {
+      if (evidenceFilter === "needs-review") return assertion.entityLinks.some((link) => link.status === "pending");
+      if (evidenceFilter === "accepted") return assertion.entityLinks.some((link) => acceptedLinkStatuses.has(link.status));
+      return true;
+    });
+    return filtered.sort((a, b) => {
+      if (a.id === focusedAssertionId) return -1;
+      if (b.id === focusedAssertionId) return 1;
+      return a.sourcePage - b.sourcePage || a.reportItem.localeCompare(b.reportItem);
+    });
+  }, [evidenceFilter, focusedAssertionId, twin.assertions]);
 
   const inspectionCounts = useMemo(() => ({
     total: twin.assertions.length,
@@ -159,8 +179,14 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
     setModelDrawerEntityId(entityId);
   }
 
-  async function submitReview(assertionId: string, entityId: string, decision: "approve" | "reject" | "move", targetEntityId?: string) {
-    setReviewingId(`${assertionId}:${entityId}`);
+  function openEvidenceManager(assertionId: string) {
+    setFocusedAssertionId(assertionId);
+    setEvidenceFilter("all");
+    setActiveTab("Evidence review");
+  }
+
+  async function submitReview(assertionId: string, entityId: string | undefined, decision: ReviewDecision, targetEntityId?: string) {
+    setReviewingId(`${assertionId}:${entityId ?? targetEntityId ?? "new"}:${decision}`);
     setError(null);
     try {
       const response = await fetch("/api/review", {
@@ -171,6 +197,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Unable to save the review decision.");
       setTwin(payload as TwinPayload);
+      setFocusedAssertionId(assertionId);
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : "Unable to save the review decision.");
     } finally {
@@ -298,6 +325,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                         <h3>{assertion.title}</h3>
                         <p>{assertion.detail}</p>
                         <small>Reported at acquisition · Page {assertion.sourcePage}</small>
+                        <button className="text-action" onClick={() => openEvidenceManager(assertion.id)}><Pencil size={13} /> Manage location</button>
                       </div>
                     </article>
                   );
@@ -353,7 +381,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
             <div>
               <span className="eyebrow">{activeTab === "Evidence review" ? "Confidence-gated evidence" : `Record since ${formatDate(twin.home.acquiredAt)}`}</span>
               <h2>{activeTab === "Evidence review" ? "Inspection review" : selectedEntity?.name ?? twin.home.name}</h2>
-              <p>{activeTab === "Evidence review" ? "Approve only the report-to-place links that are supported by clear location evidence." : selectedEntity?.detail ?? "The complete home record."}</p>
+              <p>{activeTab === "Evidence review" ? "Review, correct, and add evidence-to-place links while keeping a decision trail." : selectedEntity?.detail ?? "The complete home record."}</p>
             </div>
             <div className="record-condition">
               <span>{activeTab === "Evidence review" ? "Awaiting review" : "Baseline state"}</span>
@@ -440,6 +468,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                         <h4>{assertion.title}</h4>
                         <p>{assertion.detail}</p>
                         <small>{assertion.reportItem} · Page {assertion.sourcePage} · Reported Jun 15, 2022</small>
+                        <button className="text-action" onClick={() => openEvidenceManager(assertion.id)}><Pencil size={13} /> Manage location</button>
                       </div>
                     </article>
                   );
@@ -452,19 +481,23 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
             <section className="review-section">
               <div className="review-rule">
                 <ShieldCheck size={18} />
-                <p><strong>Placement rule:</strong> 90% and above may be linked automatically, 75–89% needs approval, and lower-confidence observations stay unassigned. Safety findings always stop here for review.</p>
+                <p><strong>Placement rule:</strong> 90% and above may be linked automatically, 75-89% needs approval, and lower-confidence observations stay unassigned. Homeowner edits are recorded as approved manual links.</p>
+              </div>
+              <div className="review-filters" aria-label="Evidence location filters">
+                <button className={evidenceFilter === "needs-review" ? "active" : ""} onClick={() => setEvidenceFilter("needs-review")}>Needs review <span>{pendingReviews.length}</span></button>
+                <button className={evidenceFilter === "accepted" ? "active" : ""} onClick={() => setEvidenceFilter("accepted")}>Linked <span>{twin.assertions.filter((assertion) => assertion.entityLinks.some((link) => acceptedLinkStatuses.has(link.status))).length}</span></button>
+                <button className={evidenceFilter === "all" ? "active" : ""} onClick={() => setEvidenceFilter("all")}>All <span>{twin.assertions.length}</span></button>
               </div>
               {error && <p className="form-error">{error}</p>}
-              {pendingReviews.length === 0 ? (
-                <div className="review-empty"><CheckCircle2 size={28} /><h3>Review queue clear</h3><p>No uncertain place links are waiting for a decision.</p></div>
+              {reviewAssertions.length === 0 ? (
+                <div className="review-empty"><CheckCircle2 size={28} /><h3>Nothing in this view</h3><p>Switch filters to manage pending, linked, or all evidence locations.</p></div>
               ) : (
                 <div className="review-list">
-                  {pendingReviews.map(({ assertion, link }) => {
-                    const entity = twin.entities.find((item) => item.id === link.entityId);
+                  {reviewAssertions.map((assertion) => {
                     const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
-                    const reviewKey = `${assertion.id}:${link.entityId}`;
+                    const currentLinks = assertion.entityLinks.filter((link) => link.status !== "rejected");
                     return (
-                      <article className="review-card" key={reviewKey}>
+                      <article className={focusedAssertionId === assertion.id ? "review-card focused" : "review-card"} key={assertion.id}>
                         {media?.storageStatus === "stored" && (
                           <a className="review-image" href={`/api/evidence?id=${media.id}`} target="_blank" rel="noreferrer">
                             <Image src={`/api/evidence?id=${media.id}`} alt={`Source page for ${assertion.title}`} width={300} height={220} unoptimized />
@@ -477,26 +510,60 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                           </div>
                           <h3>{assertion.title}</h3>
                           <p>{assertion.detail}</p>
-                          <div className="proposal-line">
-                            <span>Proposed place</span>
-                            <strong>{entity?.name ?? link.entityId}</strong>
-                            <span className="confidence-value">{Math.round(link.confidence * 100)}%</span>
+                          <div className="location-stack">
+                            {currentLinks.length === 0 ? (
+                              <div className="proposal-line muted">
+                                <span>No place linked</span>
+                                <strong>Unassigned</strong>
+                                <span className="confidence-value">0%</span>
+                              </div>
+                            ) : currentLinks.map((link) => {
+                              const entity = twin.entities.find((item) => item.id === link.entityId);
+                              const reviewKey = `${assertion.id}:${link.entityId}`;
+                              return (
+                                <div className="location-link-row" key={reviewKey}>
+                                  <div className="proposal-line">
+                                    <span>{link.status === "pending" ? "Proposed place" : "Linked place"}</span>
+                                    <strong>{entity?.name ?? link.entityId}</strong>
+                                    <span className={`link-status ${link.status}`}>{link.status === "auto-accepted" ? "auto" : link.status}</span>
+                                    <span className="confidence-value">{Math.round(link.confidence * 100)}%</span>
+                                  </div>
+                                  <small className="rationale">{link.rationale}</small>
+                                  <div className="review-actions">
+                                    {link.status === "pending" ? (
+                                      <>
+                                        <button className="primary-button" disabled={reviewingId === `${reviewKey}:approve`} onClick={() => submitReview(assertion.id, link.entityId, "approve")}><Check size={15} /> Approve</button>
+                                        <button className="secondary-button" disabled={reviewingId === `${reviewKey}:reject`} onClick={() => submitReview(assertion.id, link.entityId, "reject")}><X size={15} /> Reject</button>
+                                      </>
+                                    ) : (
+                                      <button className="secondary-button" disabled={reviewingId === `${reviewKey}:remove`} onClick={() => submitReview(assertion.id, link.entityId, "remove")}><X size={15} /> Remove</button>
+                                    )}
+                                    <form onSubmit={(event) => {
+                                      event.preventDefault();
+                                      const target = new FormData(event.currentTarget).get("targetEntityId");
+                                      if (target) submitReview(assertion.id, link.entityId, "move", String(target));
+                                    }}>
+                                      <select name="targetEntityId" defaultValue={link.entityId} aria-label="Choose a different place">
+                                        {locationEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                      </select>
+                                      <button className="secondary-button" disabled={reviewingId === `${reviewKey}:move`}><Pencil size={15} /> Change</button>
+                                    </form>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                          <small className="rationale">{link.rationale}</small>
-                          <div className="review-actions">
-                            <button className="primary-button" disabled={reviewingId === reviewKey} onClick={() => submitReview(assertion.id, link.entityId, "approve")}><Check size={15} /> Approve</button>
-                            <button className="secondary-button" disabled={reviewingId === reviewKey} onClick={() => submitReview(assertion.id, link.entityId, "reject")}><X size={15} /> Reject</button>
-                            <form onSubmit={(event) => {
-                              event.preventDefault();
-                              const target = new FormData(event.currentTarget).get("targetEntityId");
-                              if (target) submitReview(assertion.id, link.entityId, "move", String(target));
-                            }}>
-                              <select name="targetEntityId" defaultValue={link.entityId} aria-label="Choose a different place">
-                                {twin.entities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                              </select>
-                              <button className="secondary-button" disabled={reviewingId === reviewKey}>Move & approve</button>
-                            </form>
-                          </div>
+                          <form className="add-location-form" onSubmit={(event) => {
+                            event.preventDefault();
+                            const target = new FormData(event.currentTarget).get("targetEntityId");
+                            if (target) submitReview(assertion.id, undefined, "add", String(target));
+                          }}>
+                            <select name="targetEntityId" defaultValue="" aria-label="Add another place">
+                              <option value="" disabled>Add another place</option>
+                              {locationEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                            </select>
+                            <button className="primary-button" disabled={reviewingId?.startsWith(`${assertion.id}:`)}><Plus size={15} /> Add location</button>
+                          </form>
                         </div>
                       </article>
                     );

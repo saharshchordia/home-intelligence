@@ -7,34 +7,67 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as {
       assertionId?: string;
       entityId?: string;
-      decision?: "approve" | "reject" | "move";
+      decision?: "approve" | "reject" | "move" | "add" | "remove";
       targetEntityId?: string;
       note?: string;
     };
-    if (!payload.assertionId || !payload.entityId || !payload.decision) {
-      return Response.json({ error: "Assertion, entity and decision are required." }, { status: 400 });
+    if (!payload.assertionId || !payload.decision) {
+      return Response.json({ error: "Assertion and decision are required." }, { status: 400 });
     }
-    const existing = await db.prepare("SELECT status, confidence, relationship, rationale FROM assertion_entities WHERE assertion_id = ? AND entity_id = ?").bind(payload.assertionId, payload.entityId).first<Record<string, unknown>>();
-    if (!existing) return Response.json({ error: "Candidate link not found." }, { status: 404 });
+    const targetEntityId = payload.targetEntityId ?? payload.entityId;
+    const needsExistingLink = payload.decision !== "add";
+    if (needsExistingLink && !payload.entityId) {
+      return Response.json({ error: "A current entity is required for this decision." }, { status: 400 });
+    }
+    if ((payload.decision === "move" || payload.decision === "add") && !targetEntityId) {
+      return Response.json({ error: "A target entity is required for this decision." }, { status: 400 });
+    }
+
+    const existing = payload.entityId
+      ? await db.prepare("SELECT status, confidence, relationship, rationale FROM assertion_entities WHERE assertion_id = ? AND entity_id = ?").bind(payload.assertionId, payload.entityId).first<Record<string, unknown>>()
+      : null;
+    if (needsExistingLink && !existing) return Response.json({ error: "Candidate link not found." }, { status: 404 });
 
     const decidedAt = new Date().toISOString();
-    const nextStatus = payload.decision === "approve" ? "approved" : "rejected";
-    const statements = [
-      db.prepare("UPDATE assertion_entities SET status = ?, reviewed_at = ? WHERE assertion_id = ? AND entity_id = ?").bind(nextStatus, decidedAt, payload.assertionId, payload.entityId),
-      db.prepare("INSERT INTO review_decisions (id, assertion_id, entity_id, decision, previous_status, next_status, note, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(
-        `review-${crypto.randomUUID()}`, payload.assertionId, payload.entityId, payload.decision,
-        String(existing.status), nextStatus, payload.note?.trim() ?? "", decidedAt,
-      ),
-    ];
-    let acceptedEntityId = payload.decision === "approve" ? payload.entityId : null;
-    if (payload.decision === "move" && payload.targetEntityId) {
-      acceptedEntityId = payload.targetEntityId;
-      statements.push(
-        db.prepare("INSERT OR REPLACE INTO assertion_entities (assertion_id, entity_id, relationship, confidence, status, rationale, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
-          payload.assertionId, payload.targetEntityId, "human-selected", 1, "approved", "Location selected during human review.", decidedAt,
-        ),
-      );
+    const statements: D1PreparedStatement[] = [];
+    let acceptedEntityId: string | null = null;
+
+    function recordDecision(entityId: string, decision: string, previousStatus: string, nextStatus: string) {
+      statements.push(db.prepare("INSERT INTO review_decisions (id, assertion_id, entity_id, decision, previous_status, next_status, note, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(
+        `review-${crypto.randomUUID()}`, payload.assertionId, entityId, decision,
+        previousStatus, nextStatus, payload.note?.trim() ?? "", decidedAt,
+      ));
     }
+
+    if (payload.decision === "approve" && payload.entityId && existing) {
+      acceptedEntityId = payload.entityId;
+      statements.push(db.prepare("UPDATE assertion_entities SET status = ?, reviewed_at = ? WHERE assertion_id = ? AND entity_id = ?").bind("approved", decidedAt, payload.assertionId, payload.entityId));
+      recordDecision(payload.entityId, payload.decision, String(existing.status), "approved");
+    }
+
+    if ((payload.decision === "reject" || payload.decision === "remove") && payload.entityId && existing) {
+      statements.push(db.prepare("UPDATE assertion_entities SET status = ?, reviewed_at = ? WHERE assertion_id = ? AND entity_id = ?").bind("rejected", decidedAt, payload.assertionId, payload.entityId));
+      recordDecision(payload.entityId, payload.decision, String(existing.status), "rejected");
+    }
+
+    if (payload.decision === "move" && payload.entityId && targetEntityId && existing) {
+      acceptedEntityId = targetEntityId;
+      statements.push(db.prepare("UPDATE assertion_entities SET status = ?, reviewed_at = ? WHERE assertion_id = ? AND entity_id = ?").bind("rejected", decidedAt, payload.assertionId, payload.entityId));
+      statements.push(db.prepare("INSERT OR REPLACE INTO assertion_entities (assertion_id, entity_id, relationship, confidence, status, rationale, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
+        payload.assertionId, targetEntityId, "human-selected", 1, "approved", "Location selected during human review.", decidedAt,
+      ));
+      recordDecision(payload.entityId, payload.decision, String(existing.status), "rejected");
+    }
+
+    if (payload.decision === "add" && targetEntityId) {
+      acceptedEntityId = targetEntityId;
+      const targetExisting = await db.prepare("SELECT status FROM assertion_entities WHERE assertion_id = ? AND entity_id = ?").bind(payload.assertionId, targetEntityId).first<Record<string, unknown>>();
+      statements.push(db.prepare("INSERT OR REPLACE INTO assertion_entities (assertion_id, entity_id, relationship, confidence, status, rationale, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
+        payload.assertionId, targetEntityId, "human-selected", 1, "approved", "Location manually added by homeowner.", decidedAt,
+      ));
+      recordDecision(targetEntityId, payload.decision, targetExisting ? String(targetExisting.status) : "none", "approved");
+    }
+
     if (acceptedEntityId) {
       statements.push(db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind("evt-acquisition-inspection", acceptedEntityId));
     }
