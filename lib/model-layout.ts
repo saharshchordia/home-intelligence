@@ -65,7 +65,7 @@ export const modelPlacements: Record<string, ModelPlacement> = {
   "front-entry": { mode: "exterior", position: [-11, 3, 27] },
   "right-entry-porch": { mode: "exterior", position: [19, 3, 8] },
   driveway: { mode: "exterior", position: [26, 1, 10] },
-  walkways: { mode: "exterior", position: [-17, 1, 25] },
+  walkways: { mode: "exterior", position: [-29, 1, 20] },
   "retaining-walls": { mode: "exterior", position: [22, 2, -22] },
   patios: { mode: "exterior", position: [-12, 1, -32] },
   yard: { mode: "exterior", position: [0, 1, -39] },
