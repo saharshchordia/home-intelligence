@@ -89,9 +89,10 @@ function EvidencePreview({ media, alt, className }: { media?: MediaAsset; alt: s
   const src = mediaPreviewUrl(media);
   const href = mediaOpenUrl(media);
   if (!src || !href) return null;
+  const isExternalPreview = src.startsWith("https://");
   return (
     <a className={className} href={href} target="_blank" rel="noreferrer">
-      <Image src={src} alt={alt} width={420} height={260} unoptimized />
+      {isExternalPreview ? <img src={src} alt={alt} loading="lazy" decoding="async" /> : <Image src={src} alt={alt} width={420} height={260} unoptimized />}
       {media && <span>{media.documentId === "physical-ai-exterior-2026-08-02" ? `Frame ${media.sourcePage}` : `Report page ${media.sourcePage}`}</span>}
     </a>
   );
