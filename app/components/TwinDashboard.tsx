@@ -25,10 +25,15 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { EntityKind, TwinPayload } from "../../lib/twin-data";
+import { modelModes, modelPlacements, type ModelMode } from "../../lib/model-layout";
+import type { ModelPin } from "./HouseModel";
 
-const tabs = ["Overview", "Places", "Systems", "Timeline", "Evidence review"] as const;
+const HouseModel = dynamic(() => import("./HouseModel"), { ssr: false });
+
+const tabs = ["Home model", "Overview", "Places", "Systems", "Timeline", "Evidence review"] as const;
 type Tab = (typeof tabs)[number];
 
 const conditionTone: Record<string, string> = {
@@ -57,8 +62,10 @@ function entityIcon(kind: EntityKind) {
 
 export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   const [twin, setTwin] = useState(initialTwin);
-  const [activeTab, setActiveTab] = useState<Tab>("Overview");
+  const [activeTab, setActiveTab] = useState<Tab>("Home model");
   const [selectedEntityId, setSelectedEntityId] = useState("home");
+  const [modelMode, setModelMode] = useState<ModelMode>("exterior");
+  const [modelDrawerEntityId, setModelDrawerEntityId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -101,6 +108,56 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
     recommendations: twin.assertions.filter((item) => item.severity === "recommendation").length,
     maintenance: twin.assertions.filter((item) => item.severity === "maintenance").length,
   }), [twin.assertions]);
+
+  const modelPins = useMemo<ModelPin[]>(() => {
+    const severityRank = { maintenance: 0, recommendation: 1, safety: 2 } as const;
+    return Object.entries(modelPlacements).flatMap(([entityId, placement]) => {
+      const acceptedAssertions = twin.assertions.filter((assertion) => assertion.entityLinks.some(
+        (link) => link.entityId === entityId && acceptedLinkStatuses.has(link.status),
+      ));
+      const laterEvents = twin.events.filter((event) => event.type !== "Baseline" && !event.id.startsWith("evt-acquisition") && event.entityIds.includes(entityId));
+      const count = acceptedAssertions.length + laterEvents.length;
+      if (count === 0) return [];
+      const severity = acceptedAssertions.reduce<ModelPin["severity"]>((highest, assertion) => (
+        severityRank[assertion.severity] > severityRank[highest] ? assertion.severity : highest
+      ), "maintenance");
+      return [{
+        entityId,
+        label: twin.entities.find((entity) => entity.id === entityId)?.name ?? entityId,
+        count,
+        severity,
+        mode: placement.mode,
+        position: placement.position,
+      }];
+    });
+  }, [twin.assertions, twin.entities, twin.events]);
+
+  const systemEvidence = useMemo(() => twin.entities
+    .filter((entity) => entity.kind === "system")
+    .map((entity) => ({
+      entity,
+      count: twin.assertions.filter((assertion) => assertion.entityLinks.some(
+        (link) => link.entityId === entity.id && acceptedLinkStatuses.has(link.status),
+      )).length,
+    }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count), [twin.assertions, twin.entities]);
+
+  const modelDrawerEntity = twin.entities.find((entity) => entity.id === modelDrawerEntityId);
+  const modelDrawerAssertions = useMemo(() => modelDrawerEntityId ? twin.assertions.filter((assertion) => assertion.entityLinks.some(
+    (link) => link.entityId === modelDrawerEntityId && acceptedLinkStatuses.has(link.status),
+  )) : [], [modelDrawerEntityId, twin.assertions]);
+  const modelDrawerEvents = useMemo(() => modelDrawerEntityId ? twin.events.filter((event) => event.entityIds.includes(modelDrawerEntityId)) : [], [modelDrawerEntityId, twin.events]);
+
+  function changeModelMode(mode: ModelMode) {
+    setModelMode(mode);
+    setModelDrawerEntityId(null);
+  }
+
+  function selectModelPin(entityId: string) {
+    setSelectedEntityId(entityId);
+    setModelDrawerEntityId(entityId);
+  }
 
   async function submitReview(assertionId: string, entityId: string, decision: "approve" | "reject" | "move", targetEntityId?: string) {
     setReviewingId(`${assertionId}:${entityId}`);
@@ -157,7 +214,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="Home Intelligence home">
+        <a className="brand" href="#top" aria-label="Home Intelligence home" onClick={() => setActiveTab("Home model")}>
           <span className="brand-mark"><House size={18} strokeWidth={2.2} /></span>
           <span>Home Intelligence</span>
         </a>
@@ -179,6 +236,84 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
         <span className="private-source"><ShieldCheck size={15} /> Private evidence</span>
       </nav>
 
+      {activeTab === "Home model" ? (
+        <main id="top" className="model-workspace">
+          <HouseModel
+            mode={modelMode}
+            pins={modelPins}
+            selectedEntityId={selectedEntityId}
+            onModeChange={changeModelMode}
+            onSelectEntity={setSelectedEntityId}
+            onSelectPin={selectModelPin}
+          />
+          <aside className="model-index-panel" aria-label="Home model index">
+            <span className="eyebrow">Physical record</span>
+            <h1>{twin.home.name}</h1>
+            <p>{twin.home.livingAreaSqFt.toLocaleString()} sq ft represented from the acquisition sketch. Interior geometry is approximate.</p>
+            <div className="model-facts">
+              <span><strong>{modelPins.length}</strong><small>Evidence pins</small></span>
+              <span><strong>{modelModes.find((item) => item.id === modelMode)?.label}</strong><small>Current view</small></span>
+            </div>
+            <div className="system-evidence-index">
+              <div className="model-panel-heading">
+                <span>System evidence</span>
+                <small>{systemEvidence.reduce((sum, item) => sum + item.count, 0)}</small>
+              </div>
+              {systemEvidence.slice(0, 5).map(({ entity, count }) => (
+                <button key={entity.id} onClick={() => { setSelectedEntityId(entity.id); setActiveTab("Systems"); }}>
+                  <Wrench size={14} />
+                  <span>{entity.name}</span>
+                  <strong>{count}</strong>
+                </button>
+              ))}
+              {systemEvidence.length > 5 && (
+                <button onClick={() => setActiveTab("Systems")}><Layers3 size={14} /><span>All systems</span><strong>{systemEvidence.length}</strong></button>
+              )}
+            </div>
+          </aside>
+
+          {modelDrawerEntity && (
+            <aside className="model-evidence-drawer" aria-label={`${modelDrawerEntity.name} evidence history`}>
+              <div className="model-drawer-header">
+                <div><span className="eyebrow">Pinned location</span><h2>{modelDrawerEntity.name}</h2></div>
+                <button className="icon-button" title="Close evidence" aria-label="Close evidence" onClick={() => setModelDrawerEntityId(null)}><X size={18} /></button>
+              </div>
+              <p className="model-entity-detail">{modelDrawerEntity.detail}</p>
+              <div className="model-history-summary">
+                <span>{modelDrawerAssertions.length} accepted findings</span>
+                <span>{modelDrawerEvents.length} dated events</span>
+              </div>
+              <div className="model-history-list">
+                {modelDrawerAssertions.map((assertion) => {
+                  const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
+                  return (
+                    <article className="model-finding" key={assertion.id}>
+                      {media?.storageStatus === "stored" && (
+                        <a href={`/api/evidence?id=${media.id}`} target="_blank" rel="noreferrer">
+                          <Image src={`/api/evidence?id=${media.id}`} alt={`Inspection evidence for ${assertion.title}`} width={360} height={220} unoptimized />
+                        </a>
+                      )}
+                      <div>
+                        <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{assertion.severity}</span>
+                        <h3>{assertion.title}</h3>
+                        <p>{assertion.detail}</p>
+                        <small>Reported at acquisition · Page {assertion.sourcePage}</small>
+                      </div>
+                    </article>
+                  );
+                })}
+                {modelDrawerEvents.map((event) => (
+                  <article className="model-event" key={event.id}>
+                    <span>{formatDate(event.occurredAt)}</span>
+                    <h3>{event.title}</h3>
+                    <p>{event.summary}</p>
+                  </article>
+                ))}
+              </div>
+            </aside>
+          )}
+        </main>
+      ) : (
       <main id="top" className="workspace">
         <aside className="entity-rail">
           <div className="rail-heading">
@@ -415,6 +550,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
           </section>}
         </section>
       </main>
+      )}
 
       {isModalOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setIsModalOpen(false)}>

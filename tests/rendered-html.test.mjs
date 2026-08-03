@@ -5,9 +5,11 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("ships the Home Intelligence product surface", async () => {
-  const [page, dashboard, layout, baseline, packageJson] = await Promise.all([
+  const [page, dashboard, houseModel, modelLayout, layout, baseline, packageJson] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/components/TwinDashboard.tsx", root), "utf8"),
+    readFile(new URL("app/components/HouseModel.tsx", root), "utf8"),
+    readFile(new URL("lib/model-layout.ts", root), "utf8"),
     readFile(new URL("app/layout.tsx", root), "utf8"),
     readFile(new URL("lib/twin-data.ts", root), "utf8"),
     readFile(new URL("package.json", root), "utf8"),
@@ -15,6 +17,12 @@ test("ships the Home Intelligence product surface", async () => {
 
   assert.match(page, /<TwinDashboard initialTwin=\{baselineTwin\}/);
   assert.match(dashboard, /Home Intelligence/);
+  assert.match(dashboard, /useState<Tab>\("Home model"\)/);
+  assert.match(dashboard, /acceptedLinkStatuses\.has\(link\.status\)/);
+  assert.match(houseModel, /WebGLRenderer/);
+  assert.match(houseModel, /OrbitControls/);
+  assert.match(modelLayout, /modelPlacements/);
+  assert.match(modelLayout, /First floor/);
   assert.match(dashboard, /Add update/);
   assert.match(dashboard, /Evidence review/);
   assert.match(dashboard, /submitReview/);
@@ -23,7 +31,7 @@ test("ships the Home Intelligence product surface", async () => {
   assert.match(baseline, /Acquisition appraisal baseline/);
   assert.match(baseline, /2022-06-15/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton|site-creator-vinext-starter/);
-  assert.doesNotMatch(`${page}\n${dashboard}\n${layout}`, /codex-preview|SkeletonPreview/);
+  assert.doesNotMatch(`${page}\n${dashboard}\n${houseModel}\n${layout}`, /codex-preview|SkeletonPreview/);
 });
 
 test("includes persistence, documentation and the social preview", async () => {

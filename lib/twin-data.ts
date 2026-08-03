@@ -134,6 +134,7 @@ export const baselineHome: HomeProfile = {
 
 export const baselineEntities: TwinEntity[] = [
   { id: "home", homeId: "willow-house", name: "Whole home", kind: "place", groupName: "Home", condition: "C3", detail: "Generally good condition and well maintained at acquisition.", sourcePage: 3 },
+  { id: "foyer", homeId: "willow-house", name: "Foyer", kind: "place", groupName: "Main level", condition: "Unknown", detail: "Entry and foyer labeled in the acquisition building sketch.", sourcePage: 22 },
   { id: "living-room", homeId: "willow-house", name: "Living room", kind: "place", groupName: "Main level", condition: "Good", detail: "Oak flooring, sheetrock walls and wood trim.", sourcePage: 16 },
   { id: "dining-room", homeId: "willow-house", name: "Dining room", kind: "place", groupName: "Main level", condition: "Good", detail: "Documented in the acquisition interior photos.", sourcePage: 16 },
   { id: "kitchen", homeId: "willow-house", name: "Kitchen", kind: "place", groupName: "Main level", condition: "Updated", detail: "Updated approximately 1-5 years before the appraisal.", sourcePage: 17 },

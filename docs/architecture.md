@@ -24,7 +24,7 @@ Every update is attached to one or more stable entity IDs. Entities currently us
 - `site`: yard, patios and other exterior features
 - `system`: structure, roof, windows, HVAC, plumbing, electrical and finishes
 
-The taxonomy can grow without rewriting earlier events. A future floor-plan layer can map these same IDs to geometry.
+The taxonomy can grow without rewriting earlier events. The 3D model maps the same stable IDs to approximate report-derived geometry, so events and accepted assertions inherit a durable physical location.
 
 Place assignment is confidence-gated:
 
@@ -32,6 +32,14 @@ Place assignment is confidence-gated:
 - `0.75-0.89`: retained as a candidate until human review
 - `< 0.75`: not linked to a place; retain only at a confidently identified broad system or in the unassigned queue
 - safety-critical findings: human review is mandatory regardless of score
+
+### Spatial presentation contract
+
+- A pin is rendered only when an assertion-to-entity link is `auto-accepted` or `approved`.
+- Pending, rejected and unassigned links never appear on the house model.
+- Broad system findings stay in the system evidence index unless they also have an independently accepted place link.
+- A pin opens the accepted findings and dated events for that stable entity ID; the source page and temporal label remain visible.
+- Model geometry is explicitly approximate until a measured survey replaces the acquisition sketch. Geometry revisions must preserve entity IDs or provide an audited mapping.
 
 ## Phase 3: event timeline
 
@@ -62,7 +70,7 @@ The public repository excludes exact address, owner names, parcel and tax identi
 
 ## Next extensions
 
-1. Floor-plan geometry linked to existing entity IDs.
+1. Measured floor-plan geometry and calibrated room boundaries.
 2. Before-and-after photo pairs and condition scoring.
 3. Warranty, permit, contractor and appliance records.
 4. Reminders generated from maintenance intervals and observed condition.
