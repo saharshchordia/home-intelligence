@@ -4,6 +4,10 @@ import {
   baselineEvent,
   baselineEvidence,
   baselineHome,
+  drivePhotoWalkAssertions,
+  drivePhotoWalkDocument,
+  drivePhotoWalkEvent,
+  drivePhotoWalkMedia,
   type Evidence,
   type InspectionAssertion,
   type MediaAsset,
@@ -81,6 +85,42 @@ export async function ensureDatabase() {
     ),
     ...baselineEvent.entityIds.map((entityId) => db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind(baselineEvent.id, entityId)),
     ...baselineEvent.evidenceIds.map((evidenceId) => db.prepare("INSERT OR IGNORE INTO event_evidence (event_id, evidence_id) VALUES (?, ?)").bind(baselineEvent.id, evidenceId)),
+    db.prepare("INSERT OR REPLACE INTO documents (id, home_id, title, document_type, source_date, original_filename, mime_type, page_count, object_key, sha256, storage_status, visibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      drivePhotoWalkDocument.id, drivePhotoWalkDocument.homeId, drivePhotoWalkDocument.title,
+      drivePhotoWalkDocument.documentType, drivePhotoWalkDocument.sourceDate,
+      drivePhotoWalkDocument.originalFilename, drivePhotoWalkDocument.mimeType,
+      drivePhotoWalkDocument.pageCount, drivePhotoWalkDocument.objectKey,
+      drivePhotoWalkDocument.sha256, drivePhotoWalkDocument.storageStatus,
+      drivePhotoWalkDocument.visibility, "2026-08-02T23:33:36.877Z",
+    ),
+    db.prepare("INSERT OR REPLACE INTO events (id, home_id, occurred_at, title, type, summary, condition_before, condition_after, cost_cents, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      drivePhotoWalkEvent.id, drivePhotoWalkEvent.homeId, drivePhotoWalkEvent.occurredAt,
+      drivePhotoWalkEvent.title, drivePhotoWalkEvent.type, drivePhotoWalkEvent.summary,
+      drivePhotoWalkEvent.conditionBefore, drivePhotoWalkEvent.conditionAfter,
+      drivePhotoWalkEvent.costCents, drivePhotoWalkEvent.createdAt,
+    ),
+    ...drivePhotoWalkEvent.entityIds.map((entityId) => db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind(drivePhotoWalkEvent.id, entityId)),
+    ...drivePhotoWalkEvent.evidenceIds.map((evidenceId) => db.prepare("INSERT OR IGNORE INTO event_evidence (event_id, evidence_id) VALUES (?, ?)").bind(drivePhotoWalkEvent.id, evidenceId)),
+    ...drivePhotoWalkMedia.map((asset) => db.prepare("INSERT OR REPLACE INTO media_assets (id, document_id, label, kind, source_page, object_key, mime_type, sha256, storage_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      asset.id, asset.documentId, asset.label, asset.kind, asset.sourcePage,
+      asset.objectKey, asset.mimeType, asset.sha256, asset.storageStatus,
+      "2026-08-02T23:33:36.877Z",
+    )),
+    ...drivePhotoWalkAssertions.flatMap((assertion) => [
+      db.prepare("INSERT OR REPLACE INTO assertions (id, home_id, document_id, report_item, source_page, section, title, detail, severity, temporal_status, review_status, extraction_confidence, entity_confidence, temporal_confidence, location_rationale, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+        assertion.id, assertion.homeId, assertion.documentId, assertion.reportItem,
+        assertion.sourcePage, assertion.section, assertion.title, assertion.detail,
+        assertion.severity, assertion.temporalStatus, assertion.reviewStatus,
+        assertion.extractionConfidence, assertion.entityConfidence,
+        assertion.temporalConfidence, assertion.locationRationale,
+        "2026-08-02T23:33:36.877Z",
+      ),
+      ...assertion.entityLinks.map((link) => db.prepare("INSERT OR REPLACE INTO assertion_entities (assertion_id, entity_id, relationship, confidence, status, rationale, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
+        assertion.id, link.entityId, link.relationship, link.confidence,
+        link.status, link.rationale, null,
+      )),
+      ...assertion.mediaIds.map((mediaId) => db.prepare("INSERT OR REPLACE INTO assertion_evidence (assertion_id, media_id) VALUES (?, ?)").bind(assertion.id, mediaId)),
+    ]),
   ];
   await runInChunks(statements);
 }
@@ -141,7 +181,8 @@ export async function readTwin(): Promise<TwinPayload> {
   } satisfies SourceDocument));
   const mediaAssets = mediaResult.results.map((row) => ({
     id: String(row.id), documentId: String(row.document_id), label: String(row.label),
-    kind: String(row.kind), sourcePage: Number(row.source_page), mimeType: String(row.mime_type),
+    kind: String(row.kind), sourcePage: Number(row.source_page), objectKey: String(row.object_key),
+    mimeType: String(row.mime_type),
     storageStatus: String(row.storage_status),
   } satisfies MediaAsset));
   const assertions = assertionResult.results.map((row) => ({

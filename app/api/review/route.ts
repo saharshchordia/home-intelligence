@@ -31,6 +31,10 @@ export async function POST(request: Request) {
     const decidedAt = new Date().toISOString();
     const statements: D1PreparedStatement[] = [];
     let acceptedEntityId: string | null = null;
+    const assertion = await db.prepare("SELECT document_id FROM assertions WHERE id = ?").bind(payload.assertionId).first<Record<string, unknown>>();
+    const eventId = assertion?.document_id === "physical-ai-exterior-2026-08-02"
+      ? "evt-physical-ai-exterior-photo-walk-2026-08-02"
+      : "evt-acquisition-inspection";
 
     function recordDecision(entityId: string, decision: string, previousStatus: string, nextStatus: string) {
       statements.push(db.prepare("INSERT INTO review_decisions (id, assertion_id, entity_id, decision, previous_status, next_status, note, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(
@@ -69,7 +73,7 @@ export async function POST(request: Request) {
     }
 
     if (acceptedEntityId) {
-      statements.push(db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind("evt-acquisition-inspection", acceptedEntityId));
+      statements.push(db.prepare("INSERT OR IGNORE INTO event_tags (event_id, entity_id) VALUES (?, ?)").bind(eventId, acceptedEntityId));
     }
     await db.batch(statements);
 

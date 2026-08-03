@@ -10,8 +10,16 @@ export async function GET(request: Request) {
     const document = asset ? null : await db.prepare("SELECT object_key, mime_type, title AS label FROM documents WHERE id = ?").bind(id).first<Record<string, unknown>>();
     const row = asset ?? document;
     if (!row) return Response.json({ error: "Evidence not found." }, { status: 404 });
+    const objectKey = String(row.object_key);
+    if (objectKey.startsWith("drive://")) {
+      const driveId = objectKey.replace("drive://", "").replace("folders/", "");
+      const target = objectKey.startsWith("drive://folders/")
+        ? `https://drive.google.com/drive/folders/${driveId}`
+        : `https://drive.google.com/file/d/${driveId}/view`;
+      return Response.redirect(target, 302);
+    }
 
-    const object = await getEvidenceBucket().get(String(row.object_key));
+    const object = await getEvidenceBucket().get(objectKey);
     if (!object?.body) return Response.json({ error: "Evidence file is not available." }, { status: 404 });
     const filename = String(row.label).replace(/[^a-z0-9._-]+/gi, "-").toLowerCase();
     return new Response(object.body, {

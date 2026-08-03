@@ -28,7 +28,7 @@ import {
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { EntityKind, TwinPayload } from "../../lib/twin-data";
+import type { EntityKind, InspectionAssertion, MediaAsset, TwinPayload } from "../../lib/twin-data";
 import { modelModes, modelPlacements, type ModelMode } from "../../lib/model-layout";
 import type { ModelPin } from "./HouseModel";
 
@@ -49,6 +49,7 @@ const conditionTone: Record<string, string> = {
   "Needs attention": "coral",
   Unknown: "neutral",
   "Reported at acquisition": "amber",
+  Documented: "blue",
 };
 
 const acceptedLinkStatuses = new Set(["auto-accepted", "approved"]);
@@ -62,6 +63,44 @@ function entityIcon(kind: EntityKind) {
   if (kind === "system") return Wrench;
   if (kind === "site") return MapPin;
   return Layers3;
+}
+
+function driveFileId(objectKey: string) {
+  return objectKey.startsWith("drive://") ? objectKey.replace("drive://", "") : null;
+}
+
+function mediaPreviewUrl(media?: MediaAsset) {
+  if (!media) return null;
+  const fileId = driveFileId(media.objectKey);
+  if (fileId) return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
+  if (media.storageStatus === "stored") return `/api/evidence?id=${media.id}`;
+  return null;
+}
+
+function mediaOpenUrl(media?: MediaAsset) {
+  if (!media) return null;
+  const fileId = driveFileId(media.objectKey);
+  if (fileId) return `https://drive.google.com/file/d/${fileId}/view`;
+  if (media.storageStatus === "stored") return `/api/evidence?id=${media.id}`;
+  return null;
+}
+
+function EvidencePreview({ media, alt, className }: { media?: MediaAsset; alt: string; className: string }) {
+  const src = mediaPreviewUrl(media);
+  const href = mediaOpenUrl(media);
+  if (!src || !href) return null;
+  return (
+    <a className={className} href={href} target="_blank" rel="noreferrer">
+      <Image src={src} alt={alt} width={420} height={260} unoptimized />
+      {media && <span>{media.documentId === "physical-ai-exterior-2026-08-02" ? `Frame ${media.sourcePage}` : `Report page ${media.sourcePage}`}</span>}
+    </a>
+  );
+}
+
+function sourceLabel(assertion: InspectionAssertion, twin: TwinPayload) {
+  const document = twin.documents.find((item) => item.id === assertion.documentId);
+  if (document?.documentType === "photo-walk") return `Exterior baseline · ${formatDate(document.sourceDate)}`;
+  return `Reported at acquisition · Page ${assertion.sourcePage}`;
 }
 
 export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
@@ -122,12 +161,16 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
     });
   }, [evidenceFilter, focusedAssertionId, twin.assertions]);
 
+  const inspectionAssertions = useMemo(() => twin.assertions.filter((item) => item.documentId !== "physical-ai-exterior-2026-08-02"), [twin.assertions]);
   const inspectionCounts = useMemo(() => ({
-    total: twin.assertions.length,
-    safety: twin.assertions.filter((item) => item.severity === "safety").length,
-    recommendations: twin.assertions.filter((item) => item.severity === "recommendation").length,
-    maintenance: twin.assertions.filter((item) => item.severity === "maintenance").length,
-  }), [twin.assertions]);
+    total: inspectionAssertions.length,
+    safety: inspectionAssertions.filter((item) => item.severity === "safety").length,
+    recommendations: inspectionAssertions.filter((item) => item.severity === "recommendation").length,
+    maintenance: inspectionAssertions.filter((item) => item.severity === "maintenance").length,
+  }), [inspectionAssertions]);
+  const photoWalkAssertions = useMemo(() => twin.assertions
+    .filter((assertion) => assertion.documentId === "physical-ai-exterior-2026-08-02")
+    .sort((a, b) => a.sourcePage - b.sourcePage), [twin.assertions]);
 
   const modelPins = useMemo<ModelPin[]>(() => {
     const severityRank = { maintenance: 0, recommendation: 1, safety: 2 } as const;
@@ -315,16 +358,12 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
                   return (
                     <article className="model-finding" key={assertion.id}>
-                      {media?.storageStatus === "stored" && (
-                        <a href={`/api/evidence?id=${media.id}`} target="_blank" rel="noreferrer">
-                          <Image src={`/api/evidence?id=${media.id}`} alt={`Inspection evidence for ${assertion.title}`} width={360} height={220} unoptimized />
-                        </a>
-                      )}
+                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="model-photo-link" />
                       <div>
                         <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{assertion.severity}</span>
                         <h3>{assertion.title}</h3>
                         <p>{assertion.detail}</p>
-                        <small>Reported at acquisition · Page {assertion.sourcePage}</small>
+                        <small>{sourceLabel(assertion, twin)}</small>
                         <button className="text-action" onClick={() => openEvidenceManager(assertion.id)}><Pencil size={13} /> Manage location</button>
                       </div>
                     </article>
@@ -416,6 +455,37 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
             </section>
           )}
 
+          {photoWalkAssertions.length > 0 && activeTab === "Overview" && (
+            <section className="photo-walk-section" aria-label="Exterior baseline photo walk">
+              <div className="section-title">
+                <div>
+                  <span className="eyebrow">Physical AI / Google Drive</span>
+                  <h3>Exterior baseline photo walk</h3>
+                </div>
+                <button className="secondary-button" onClick={() => { setEvidenceFilter("all"); setActiveTab("Evidence review"); }}>
+                  <Pencil size={15} /> Review locations
+                </button>
+              </div>
+              <div className="photo-walk-strip">
+                {photoWalkAssertions.map((assertion) => {
+                  const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
+                  const accepted = assertion.entityLinks.some((link) => acceptedLinkStatuses.has(link.status));
+                  const pending = assertion.entityLinks.some((link) => link.status === "pending");
+                  return (
+                    <article className="photo-frame" key={assertion.id}>
+                      <EvidencePreview media={media} alt={`Exterior photo walk frame ${assertion.sourcePage}`} className="photo-frame-image" />
+                      <div>
+                        <span className={accepted ? "link-status auto-accepted" : pending ? "link-status pending" : "link-status"}>{accepted ? "linked" : pending ? "review" : "unassigned"}</span>
+                        <strong>{assertion.title}</strong>
+                        <small>Frame {assertion.sourcePage} · {Math.round(assertion.entityConfidence * 100)}% route confidence</small>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {(activeTab === "Overview" || activeTab === "Places" || activeTab === "Systems") && (
             <>
               <div className="metric-strip" aria-label="Home baseline facts">
@@ -454,12 +524,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
                   return (
                     <article className="finding-card" key={assertion.id}>
-                      {media?.storageStatus === "stored" && (
-                        <a className="finding-image" href={`/api/evidence?id=${media.id}`} target="_blank" rel="noreferrer">
-                          <Image src={`/api/evidence?id=${media.id}`} alt={`Inspection evidence for ${assertion.title}`} width={420} height={260} unoptimized />
-                          <span>Report page {media.sourcePage}</span>
-                        </a>
-                      )}
+                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="finding-image" />
                       <div className="finding-body">
                         <div className="finding-meta">
                           <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{assertion.severity}</span>
@@ -467,7 +532,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                         </div>
                         <h4>{assertion.title}</h4>
                         <p>{assertion.detail}</p>
-                        <small>{assertion.reportItem} · Page {assertion.sourcePage} · Reported Jun 15, 2022</small>
+                        <small>{assertion.reportItem} · {sourceLabel(assertion, twin)}</small>
                         <button className="text-action" onClick={() => openEvidenceManager(assertion.id)}><Pencil size={13} /> Manage location</button>
                       </div>
                     </article>
@@ -498,11 +563,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                     const currentLinks = assertion.entityLinks.filter((link) => link.status !== "rejected");
                     return (
                       <article className={focusedAssertionId === assertion.id ? "review-card focused" : "review-card"} key={assertion.id}>
-                        {media?.storageStatus === "stored" && (
-                          <a className="review-image" href={`/api/evidence?id=${media.id}`} target="_blank" rel="noreferrer">
-                            <Image src={`/api/evidence?id=${media.id}`} alt={`Source page for ${assertion.title}`} width={300} height={220} unoptimized />
-                          </a>
-                        )}
+                        <EvidencePreview media={media} alt={`Source evidence for ${assertion.title}`} className="review-image" />
                         <div className="review-content">
                           <div className="finding-meta">
                             <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <AlertTriangle size={13} />}{assertion.severity}</span>

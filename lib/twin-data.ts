@@ -84,7 +84,7 @@ export type InspectionAssertion = {
   title: string;
   detail: string;
   severity: "maintenance" | "recommendation" | "safety";
-  temporalStatus: "reported-at-acquisition";
+  temporalStatus: "reported-at-acquisition" | "current-observation";
   reviewStatus: "accepted" | "pending" | "unassigned" | "reviewed";
   extractionConfidence: number;
   entityConfidence: number;
@@ -100,6 +100,7 @@ export type MediaAsset = {
   label: string;
   kind: string;
   sourcePage: number;
+  objectKey: string;
   mimeType: string;
   storageStatus: string;
 };
@@ -155,6 +156,9 @@ export const baselineEntities: TwinEntity[] = [
   { id: "crawlspace", homeId: "willow-house", name: "Crawlspace", kind: "place", groupName: "Lower level", condition: "Unknown", detail: "Foundation and service area documented during the acquisition inspection.", sourcePage: 47 },
   { id: "garage", homeId: "willow-house", name: "Detached garage", kind: "place", groupName: "Exterior", condition: "Good", detail: "Detached single garage with documented interior.", sourcePage: 16 },
   { id: "front-entry", homeId: "willow-house", name: "Front entry", kind: "place", groupName: "Exterior", condition: "Unknown", detail: "Primary exterior entry documented during the acquisition inspection.", sourcePage: 28 },
+  { id: "front-yard", homeId: "willow-house", name: "Front yard", kind: "site", groupName: "Exterior", condition: "Unknown", detail: "Front approach and yard area documented by the Physical AI exterior photo walk.", sourcePage: 0 },
+  { id: "left-side-exterior", homeId: "willow-house", name: "Left side exterior", kind: "site", groupName: "Exterior", condition: "Unknown", detail: "Left side facade and side-yard path documented by the Physical AI exterior photo walk.", sourcePage: 0 },
+  { id: "rear-exterior", homeId: "willow-house", name: "Rear exterior", kind: "site", groupName: "Exterior", condition: "Unknown", detail: "Rear facade and backyard transition documented by the Physical AI exterior photo walk.", sourcePage: 0 },
   { id: "right-entry-porch", homeId: "willow-house", name: "Right entry porch", kind: "site", groupName: "Exterior", condition: "Unknown", detail: "Exterior entry documented during the acquisition inspection.", sourcePage: 29 },
   { id: "driveway", homeId: "willow-house", name: "Driveway", kind: "site", groupName: "Grounds", condition: "Unknown", detail: "Driveway documented during the acquisition inspection.", sourcePage: 31 },
   { id: "walkways", homeId: "willow-house", name: "Walkways and steps", kind: "site", groupName: "Grounds", condition: "Unknown", detail: "Exterior circulation documented during the acquisition inspection.", sourcePage: 32 },
@@ -179,6 +183,7 @@ export const baselineEvidence: Evidence[] = [
   { id: "ev-interior", homeId: "willow-house", label: "Interior and site photos", kind: "photo-set", sourceRef: "Appraisal report, pages 16-18", capturedAt: "2022-06-15", visibility: "private-source" },
   { id: "ev-plat", homeId: "willow-house", label: "Plat map", kind: "drawing", sourceRef: "Appraisal report, page 21", capturedAt: "2022-06-15", visibility: "private-source" },
   { id: "ev-sketch", homeId: "willow-house", label: "Building sketch", kind: "drawing", sourceRef: "Appraisal report, page 22", capturedAt: "2022-06-15", visibility: "private-source" },
+  { id: "ev-physical-ai-exterior-photo-walk", homeId: "willow-house", label: "Exterior baseline photo walk", kind: "photo-set", sourceRef: "Google Drive / Physical AI folder", capturedAt: "2026-08-02", visibility: "private-source" },
 ];
 
 export const baselineEvent: TwinEvent = {
@@ -196,12 +201,115 @@ export const baselineEvent: TwinEvent = {
   evidenceIds: baselineEvidence.map((item) => item.id),
 };
 
+export const drivePhotoWalkDocument = {
+  id: "physical-ai-exterior-2026-08-02",
+  homeId: baselineHome.id,
+  title: "Physical AI exterior photo walk",
+  documentType: "photo-walk",
+  sourceDate: "2026-08-02",
+  originalFilename: "Physical AI Google Drive folder",
+  mimeType: "application/vnd.home-intelligence.photo-walk+json",
+  pageCount: 30,
+  objectKey: "drive://folders/1eRur5-UbUV4kNYlPx7WXLYQds55JazPO",
+  sha256: "drive-folder-1eRur5-UbUV4kNYlPx7WXLYQds55JazPO",
+  storageStatus: "referenced",
+  visibility: "private",
+};
+
+const drivePhotoWalkFiles = [
+  ["IMG_5270.HEIC", "1e7NZsxCaf5AkGuM5byiLwUxMB0UZB2mq", "front-entry", 0.92, "auto-accepted", "Owner described the folder as beginning at the front door; this is the first image in filename sequence."],
+  ["IMG_5271.HEIC", "1x1-8M-nOPDWstC2T5KNXIKAO_KbLSDmf", "front-entry", 0.9, "auto-accepted", "Early sequence image in the owner-described front-door start of the walk."],
+  ["IMG_5272.HEIC", "1N5XffdQRAnvCHvDyx9dANcCrSZwZT2eP", "front-yard", 0.86, "pending", "Likely front yard based on owner-described walk direction, but exact view should be reviewed."],
+  ["IMG_5273.HEIC", "1jgfAyanrKYIrjklpYSOSkhD50-G3QbDi", "front-yard", 0.86, "pending", "Likely front yard based on owner-described walk direction, but exact view should be reviewed."],
+  ["IMG_5274.HEIC", "1SKBiQxftCSFdgD-0BLvH270WsCoJprra", "front-yard", 0.86, "pending", "Likely front yard based on owner-described walk direction, but exact view should be reviewed."],
+  ["IMG_5275.HEIC", "11S5bx8bZw_ZV2ee6lkaN4m3kZVIsRyxO", "front-yard", 0.84, "pending", "Owner-provided order indicates this is still in the front/front-side transition."],
+  ["IMG_5276.HEIC", "16di4oOLAvGHocNYFxoMz_6w7fY62ykM5", "front-yard", 0.84, "pending", "Owner-provided order indicates this is still in the front/front-side transition."],
+  ["IMG_5277.HEIC", "18KMn6gPg90Bs8i0reLam-iQs6lNgRgXo", "front-yard", 0.84, "pending", "Owner-provided order indicates this is still in the front/front-side transition."],
+  ["IMG_5278.HEIC", "1GIKL01itRloNjBz62NXKe8pxkaaGhHt7", "left-side-exterior", 0.82, "pending", "Likely left side exterior from the transition after front yard in the walk sequence."],
+  ["IMG_5279.HEIC", "1IHK2j9chFxiV1LJ-x4nMJmJW1vFulnAF", "left-side-exterior", 0.82, "pending", "Likely left side exterior from the transition after front yard in the walk sequence."],
+  ["IMG_5280.HEIC", "1vvWitjmMDmHYfhZXNYl99hoqQyjE8GhU", "left-side-exterior", 0.82, "pending", "Likely side facade based on owner-described walk direction."],
+  ["IMG_5281.HEIC", "1mP4H0_EVubyXj2MWjZtGp7eNLeBSQNjB", "left-side-exterior", 0.82, "pending", "Likely side facade based on owner-described walk direction."],
+  ["IMG_5282.HEIC", "1sg_ICdz7q_rQ1K0A1fPmOa5CtMY6H-Oz", "left-side-exterior", 0.82, "pending", "Likely side facade based on owner-described walk direction."],
+  ["IMG_5283.HEIC", "1QnfDPkR1i9gFKsvJdUq1REz8OmJy97GQ", "left-side-exterior", 0.82, "pending", "Likely side facade based on owner-described walk direction."],
+  ["IMG_5284.HEIC", "1Jxyi4NL30Q8MMhkMlW_Vkr4iJWu3Ue0c", "left-side-exterior", 0.8, "pending", "Likely side-to-back transition; needs visual confirmation before finer tagging."],
+  ["IMG_5285.HEIC", "1YHbFsJrMXq3mwC0iJav0FInPwhoSmnvK", "left-side-exterior", 0.8, "pending", "Likely side-to-back transition; needs visual confirmation before finer tagging."],
+  ["IMG_5286.HEIC", "1rwBXyIlYY-VS5zCRm9IiWiVj4kd_rsM6", "rear-exterior", 0.84, "pending", "Likely rear exterior/backyard based on the latter half of the owner-described route."],
+  ["IMG_5287.HEIC", "1TzIC1K5GoynOuJrgXFNMy6JCGRHWT9Cl", "rear-exterior", 0.84, "pending", "Likely rear exterior/backyard based on the latter half of the owner-described route."],
+  ["IMG_5288.HEIC", "1VyGGVUmZZ5nweJxAKfeX9AfQv7hq3EoV", "rear-exterior", 0.84, "pending", "Likely rear exterior/backyard based on the latter half of the owner-described route."],
+  ["IMG_5289.HEIC", "10gB4ztjVRO7FXrSLlQeDlE1ws4pydXy3", "rear-exterior", 0.84, "pending", "Likely rear exterior/backyard based on the latter half of the owner-described route."],
+  ["IMG_5290.HEIC", "1w6upPUG1JEM1wHXpmypd5G4lyXJOA_LK", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5291.HEIC", "1rgMdeCRJWQGPSBEDwCDXrtenjzLoNmNK", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5292.HEIC", "1RDRftnUqLDy5WcTBhoELFw17tiyQYkBL", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5293.HEIC", "12uqdRU5JCjvqPzjq-6CQ50vO9Ljwn87l", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5294.HEIC", "1dZJ1DOofmPg7R6JB53Wp7gBJ-gcmcSkW", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5295.HEIC", "16I34KdeN4kygMh-p9qX0mQ4i4_wZUn_m", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5296.HEIC", "1dUtDO9hUP5wG4dv89hcIHKclcckytvTH", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5297.HEIC", "1JNr_RcaWsFd3XQqfbAJITkUmmQLGs8qJ", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5298.HEIC", "1uFsVvAxr7mOphTj4t8BRtfzVRJ6UE5f6", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+  ["IMG_5299.HEIC", "1csliyfEMLZcIT9SyV7-Aqe7rbhE7rV1L", "yard", 0.84, "pending", "Likely backyard based on owner-described final route segment."],
+] as const;
+
+export const drivePhotoWalkMedia: Array<MediaAsset & { driveFileId: string; sourceRef: string; sha256: string }> = drivePhotoWalkFiles.map(([filename, driveFileId], index) => ({
+  id: `media-physical-ai-${filename.toLowerCase().replace(".heic", "")}`,
+  documentId: drivePhotoWalkDocument.id,
+  label: filename,
+  kind: "photo",
+  sourcePage: index + 1,
+  objectKey: `drive://${driveFileId}`,
+  mimeType: "image/heif",
+  storageStatus: "referenced",
+  driveFileId,
+  sourceRef: `Google Drive / Physical AI / ${filename}`,
+  sha256: `drive-${driveFileId}`,
+}));
+
+export const drivePhotoWalkAssertions: InspectionAssertion[] = drivePhotoWalkFiles.map(([filename, , entityId, confidence, status, rationale], index) => ({
+  id: `assert-physical-ai-${filename.toLowerCase().replace(".heic", "")}`,
+  homeId: baselineHome.id,
+  documentId: drivePhotoWalkDocument.id,
+  reportItem: `Photo walk frame ${String(index + 1).padStart(2, "0")}`,
+  sourcePage: index + 1,
+  section: "Exterior photo walk",
+  title: filename,
+  detail: "Exterior baseline photo from the Physical AI Google Drive folder. The route was described by the homeowner as starting at the front door, moving left across the front yard and side of the house, then into the backyard.",
+  severity: "maintenance",
+  temporalStatus: "current-observation",
+  reviewStatus: status === "auto-accepted" ? "accepted" : "pending",
+  extractionConfidence: 0.98,
+  entityConfidence: confidence,
+  temporalConfidence: 0.94,
+  locationRationale: rationale,
+  entityLinks: [{
+    entityId,
+    relationship: "owner-described-route-segment",
+    confidence,
+    status,
+    rationale,
+  }],
+  mediaIds: [`media-physical-ai-${filename.toLowerCase().replace(".heic", "")}`],
+}));
+
+export const drivePhotoWalkEvent: TwinEvent = {
+  id: "evt-physical-ai-exterior-photo-walk-2026-08-02",
+  homeId: baselineHome.id,
+  occurredAt: "2026-08-02",
+  title: "Exterior baseline photo walk",
+  type: "Observation",
+  summary: "Thirty exterior photos from the Physical AI Drive folder establish a current visual baseline from the front door, across the front and left side, and into the backyard. Broad route segments are recorded; exact feature tags remain review-gated.",
+  conditionBefore: null,
+  conditionAfter: "Documented",
+  costCents: null,
+  createdAt: "2026-08-02T23:33:36.877Z",
+  entityIds: ["front-entry", "front-yard", "left-side-exterior", "rear-exterior", "yard"],
+  evidenceIds: ["ev-physical-ai-exterior-photo-walk"],
+};
+
 export const baselineTwin: TwinPayload = {
   home: baselineHome,
   entities: baselineEntities,
-  events: [baselineEvent],
+  events: [drivePhotoWalkEvent, baselineEvent],
   evidence: baselineEvidence,
-  documents: [],
-  assertions: [],
-  mediaAssets: [],
+  documents: [drivePhotoWalkDocument],
+  assertions: drivePhotoWalkAssertions,
+  mediaAssets: drivePhotoWalkMedia,
 };
