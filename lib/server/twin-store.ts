@@ -8,10 +8,14 @@ import {
   drivePhotoWalkDocument,
   drivePhotoWalkEvent,
   drivePhotoWalkMedia,
+  drivePhotoWalkPins,
+  baselineSpatialZones,
+  type EvidencePin,
   type Evidence,
   type InspectionAssertion,
   type MediaAsset,
   type SourceDocument,
+  type SpatialZone,
   type TwinEntity,
   type TwinEvent,
   type TwinPayload,
@@ -30,12 +34,17 @@ export const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, label TEXT NOT NULL, kind TEXT NOT NULL, source_page INTEGER NOT NULL, object_key TEXT NOT NULL, mime_type TEXT NOT NULL, sha256 TEXT NOT NULL, storage_status TEXT NOT NULL, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS assertion_evidence (assertion_id TEXT NOT NULL, media_id TEXT NOT NULL, PRIMARY KEY (assertion_id, media_id))`,
   `CREATE TABLE IF NOT EXISTS review_decisions (id TEXT PRIMARY KEY, assertion_id TEXT NOT NULL, entity_id TEXT NOT NULL, decision TEXT NOT NULL, previous_status TEXT NOT NULL, next_status TEXT NOT NULL, note TEXT NOT NULL, decided_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS spatial_zones (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, entity_id TEXT, name TEXT NOT NULL, mode TEXT NOT NULL, zone_type TEXT NOT NULL, geometry_kind TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, width REAL NOT NULL, height REAL NOT NULL, depth REAL NOT NULL, color TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS evidence_pins (id TEXT PRIMARY KEY, home_id TEXT NOT NULL, assertion_id TEXT NOT NULL, media_id TEXT, zone_id TEXT, entity_id TEXT, mode TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, label TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL, rationale TEXT NOT NULL, created_at TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS events_date_idx ON events(home_id, occurred_at DESC)`,
   `CREATE INDEX IF NOT EXISTS event_tags_entity_idx ON event_tags(entity_id, event_id)`,
   `CREATE INDEX IF NOT EXISTS assertions_document_idx ON assertions(document_id, source_page)`,
   `CREATE INDEX IF NOT EXISTS assertions_review_idx ON assertions(review_status, severity)`,
   `CREATE INDEX IF NOT EXISTS assertion_entities_entity_idx ON assertion_entities(entity_id, status)`,
   `CREATE INDEX IF NOT EXISTS media_assets_document_idx ON media_assets(document_id, source_page)`,
+  `CREATE INDEX IF NOT EXISTS spatial_zones_entity_idx ON spatial_zones(entity_id, mode)`,
+  `CREATE INDEX IF NOT EXISTS evidence_pins_assertion_idx ON evidence_pins(assertion_id, status)`,
+  `CREATE INDEX IF NOT EXISTS evidence_pins_zone_idx ON evidence_pins(zone_id, status)`,
 ];
 
 export function getD1() {
@@ -121,6 +130,16 @@ export async function ensureDatabase() {
       )),
       ...assertion.mediaIds.map((mediaId) => db.prepare("INSERT OR REPLACE INTO assertion_evidence (assertion_id, media_id) VALUES (?, ?)").bind(assertion.id, mediaId)),
     ]),
+    ...baselineSpatialZones.map((zone) => db.prepare("INSERT OR IGNORE INTO spatial_zones (id, home_id, entity_id, name, mode, zone_type, geometry_kind, x, y, z, width, height, depth, color, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      zone.id, zone.homeId, zone.entityId, zone.name, zone.mode, zone.zoneType,
+      zone.geometryKind, zone.x, zone.y, zone.z, zone.width, zone.height,
+      zone.depth, zone.color, zone.status, zone.createdAt,
+    )),
+    ...drivePhotoWalkPins.map((pin) => db.prepare("INSERT OR IGNORE INTO evidence_pins (id, home_id, assertion_id, media_id, zone_id, entity_id, mode, x, y, z, label, confidence, status, rationale, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      pin.id, pin.homeId, pin.assertionId, pin.mediaId, pin.zoneId, pin.entityId,
+      pin.mode, pin.x, pin.y, pin.z, pin.label, pin.confidence, pin.status,
+      pin.rationale, pin.createdAt,
+    )),
   ];
   await runInChunks(statements);
 }
@@ -128,7 +147,7 @@ export async function ensureDatabase() {
 export async function readTwin(): Promise<TwinPayload> {
   await ensureDatabase();
   const db = getD1();
-  const [homeResult, entityResult, eventResult, tagResult, evidenceResult, eventEvidenceResult, documentResult, assertionResult, assertionEntityResult, mediaResult, assertionEvidenceResult] = await Promise.all([
+  const [homeResult, entityResult, eventResult, tagResult, evidenceResult, eventEvidenceResult, documentResult, assertionResult, assertionEntityResult, mediaResult, assertionEvidenceResult, zoneResult, pinResult] = await Promise.all([
     db.prepare("SELECT * FROM homes LIMIT 1").first<Record<string, unknown>>(),
     db.prepare("SELECT * FROM entities ORDER BY kind, group_name, name").all<Record<string, unknown>>(),
     db.prepare("SELECT * FROM events ORDER BY occurred_at DESC, created_at DESC").all<Record<string, unknown>>(),
@@ -140,6 +159,8 @@ export async function readTwin(): Promise<TwinPayload> {
     db.prepare("SELECT * FROM assertion_entities").all<Record<string, unknown>>(),
     db.prepare("SELECT * FROM media_assets ORDER BY source_page, id").all<Record<string, unknown>>(),
     db.prepare("SELECT assertion_id, media_id FROM assertion_evidence").all<Record<string, string>>(),
+    db.prepare("SELECT * FROM spatial_zones ORDER BY mode, zone_type, name").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM evidence_pins ORDER BY created_at DESC, label").all<Record<string, unknown>>(),
   ]);
 
   if (!homeResult) throw new Error("The home record could not be initialized.");
@@ -199,6 +220,28 @@ export async function readTwin(): Promise<TwinPayload> {
     })),
     mediaIds: assertionEvidenceResult.results.filter((item) => item.assertion_id === row.id).map((item) => item.media_id),
   } satisfies InspectionAssertion));
+  const spatialZones = zoneResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id),
+    entityId: row.entity_id ? String(row.entity_id) : null,
+    name: String(row.name), mode: String(row.mode) as SpatialZone["mode"],
+    zoneType: String(row.zone_type) as SpatialZone["zoneType"],
+    geometryKind: String(row.geometry_kind) as SpatialZone["geometryKind"],
+    x: Number(row.x), y: Number(row.y), z: Number(row.z),
+    width: Number(row.width), height: Number(row.height), depth: Number(row.depth),
+    color: String(row.color), status: String(row.status) as SpatialZone["status"],
+    createdAt: String(row.created_at),
+  } satisfies SpatialZone));
+  const evidencePins = pinResult.results.map((row) => ({
+    id: String(row.id), homeId: String(row.home_id), assertionId: String(row.assertion_id),
+    mediaId: row.media_id ? String(row.media_id) : null,
+    zoneId: row.zone_id ? String(row.zone_id) : null,
+    entityId: row.entity_id ? String(row.entity_id) : null,
+    mode: String(row.mode) as EvidencePin["mode"],
+    x: Number(row.x), y: Number(row.y), z: Number(row.z),
+    label: String(row.label), confidence: Number(row.confidence),
+    status: String(row.status) as EvidencePin["status"],
+    rationale: String(row.rationale), createdAt: String(row.created_at),
+  } satisfies EvidencePin));
 
-  return { home, entities, events, evidence, documents, assertions, mediaAssets };
+  return { home, entities, events, evidence, documents, assertions, mediaAssets, spatialZones, evidencePins };
 }

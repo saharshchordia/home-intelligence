@@ -110,6 +110,10 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   const [selectedEntityId, setSelectedEntityId] = useState("home");
   const [modelMode, setModelMode] = useState<ModelMode>("exterior");
   const [modelDrawerEntityId, setModelDrawerEntityId] = useState<string | null>(null);
+  const [modelDrawerAssertionId, setModelDrawerAssertionId] = useState<string | null>(null);
+  const [showSpatialZones, setShowSpatialZones] = useState(true);
+  const [placementAssertionId, setPlacementAssertionId] = useState<string | null>(null);
+  const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -175,7 +179,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
 
   const modelPins = useMemo<ModelPin[]>(() => {
     const severityRank = { maintenance: 0, recommendation: 1, safety: 2 } as const;
-    return Object.entries(modelPlacements).flatMap(([entityId, placement]) => {
+    const entityPins = Object.entries(modelPlacements).flatMap<ModelPin>(([entityId, placement]) => {
       const acceptedAssertions = twin.assertions.filter((assertion) => assertion.entityLinks.some(
         (link) => link.entityId === entityId && acceptedLinkStatuses.has(link.status),
       ));
@@ -186,15 +190,32 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
         severityRank[assertion.severity] > severityRank[highest] ? assertion.severity : highest
       ), "maintenance");
       return [{
+        id: `entity-${entityId}`,
         entityId,
         label: twin.entities.find((entity) => entity.id === entityId)?.name ?? entityId,
         count,
         severity,
         mode: placement.mode,
         position: placement.position,
+        kind: "entity",
       }];
     });
-  }, [twin.assertions, twin.entities, twin.events]);
+    const evidencePins = twin.evidencePins.map<ModelPin>((pin) => {
+      const assertion = twin.assertions.find((item) => item.id === pin.assertionId);
+      return {
+        id: pin.id,
+        entityId: pin.entityId,
+        assertionId: pin.assertionId,
+        label: assertion?.title ?? pin.label,
+        count: 1,
+        severity: assertion?.severity ?? "maintenance",
+        mode: pin.mode,
+        position: [pin.x, pin.y, pin.z],
+        kind: "evidence",
+      };
+    });
+    return [...entityPins, ...evidencePins];
+  }, [twin.assertions, twin.entities, twin.events, twin.evidencePins]);
 
   const systemEvidence = useMemo(() => twin.entities
     .filter((entity) => entity.kind === "system")
@@ -208,6 +229,8 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
     .sort((a, b) => b.count - a.count), [twin.assertions, twin.entities]);
 
   const modelDrawerEntity = twin.entities.find((entity) => entity.id === modelDrawerEntityId);
+  const modelDrawerAssertion = twin.assertions.find((assertion) => assertion.id === modelDrawerAssertionId);
+  const modelDrawerPin = modelDrawerAssertion ? twin.evidencePins.find((pin) => pin.assertionId === modelDrawerAssertion.id) : null;
   const modelDrawerAssertions = useMemo(() => modelDrawerEntityId ? twin.assertions.filter((assertion) => assertion.entityLinks.some(
     (link) => link.entityId === modelDrawerEntityId && acceptedLinkStatuses.has(link.status),
   )) : [], [modelDrawerEntityId, twin.assertions]);
@@ -216,17 +239,94 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   function changeModelMode(mode: ModelMode) {
     setModelMode(mode);
     setModelDrawerEntityId(null);
+    setModelDrawerAssertionId(null);
   }
 
-  function selectModelPin(entityId: string) {
-    setSelectedEntityId(entityId);
-    setModelDrawerEntityId(entityId);
+  function selectModelPin(pin: ModelPin) {
+    if (pin.kind === "evidence" && pin.assertionId) {
+      setModelDrawerAssertionId(pin.assertionId);
+      setModelDrawerEntityId(null);
+      return;
+    }
+    if (pin.entityId) {
+      setSelectedEntityId(pin.entityId);
+      setModelDrawerEntityId(pin.entityId);
+      setModelDrawerAssertionId(null);
+    }
   }
 
   function openEvidenceManager(assertionId: string) {
     setFocusedAssertionId(assertionId);
     setEvidenceFilter("all");
     setActiveTab("Evidence review");
+  }
+
+  function startPinPlacement(assertionId: string) {
+    const existingPin = twin.evidencePins.find((pin) => pin.assertionId === assertionId);
+    setPlacementAssertionId(assertionId);
+    setFocusedAssertionId(assertionId);
+    setModelMode(existingPin?.mode ?? "exterior");
+    setModelDrawerAssertionId(assertionId);
+    setModelDrawerEntityId(null);
+    setActiveTab("Home model");
+  }
+
+  async function placeEvidenceOnModel(placement: { mode: ModelMode; position: [number, number, number]; entityId?: string | null; zoneId?: string | null }) {
+    if (!placementAssertionId) return;
+    const assertion = twin.assertions.find((item) => item.id === placementAssertionId);
+    setError(null);
+    try {
+      const response = await fetch("/api/spatial", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "pin-evidence",
+          assertionId: placementAssertionId,
+          mediaId: assertion?.mediaIds[0] ?? null,
+          entityId: placement.entityId ?? null,
+          zoneId: placement.zoneId ?? null,
+          mode: placement.mode,
+          position: { x: placement.position[0], y: placement.position[1], z: placement.position[2] },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to place evidence on the model.");
+      setTwin(payload as TwinPayload);
+      setPlacementAssertionId(null);
+      setModelDrawerAssertionId(assertion?.id ?? null);
+    } catch (pinError) {
+      setError(pinError instanceof Error ? pinError.message : "Unable to place evidence on the model.");
+    }
+  }
+
+  async function submitZone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setError(null);
+    try {
+      const response = await fetch("/api/spatial", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "create-zone",
+          name: form.get("name"),
+          mode: modelMode,
+          zoneType: form.get("zoneType"),
+          geometryKind: form.get("geometryKind"),
+          entityId: form.get("entityId") || null,
+          position: { x: Number(form.get("x")), y: Number(form.get("y")), z: Number(form.get("z")) },
+          size: { width: Number(form.get("width")), height: Number(form.get("height")), depth: Number(form.get("depth")) },
+          color: form.get("color"),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to create zone.");
+      setTwin(payload as TwinPayload);
+      setIsZoneModalOpen(false);
+      setShowSpatialZones(true);
+    } catch (zoneError) {
+      setError(zoneError instanceof Error ? zoneError.message : "Unable to create zone.");
+    }
   }
 
   async function submitReview(assertionId: string, entityId: string | undefined, decision: ReviewDecision, targetEntityId?: string) {
@@ -312,19 +412,29 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
           <HouseModel
             mode={modelMode}
             pins={modelPins}
+            zones={twin.spatialZones}
+            showZones={showSpatialZones}
+            placementAssertionId={placementAssertionId}
             selectedEntityId={selectedEntityId}
             onModeChange={changeModelMode}
             onSelectEntity={setSelectedEntityId}
             onSelectPin={selectModelPin}
+            onPlaceEvidence={placeEvidenceOnModel}
           />
           <aside className="model-index-panel" aria-label="Home model index">
             <span className="eyebrow">Physical record</span>
             <h1>{twin.home.name}</h1>
             <p>{twin.home.livingAreaSqFt.toLocaleString()} sq ft represented from the acquisition sketch. Interior geometry is approximate.</p>
             <div className="model-facts">
-              <span><strong>{modelPins.length}</strong><small>Evidence pins</small></span>
+              <span><strong>{twin.evidencePins.length}</strong><small>Evidence pins</small></span>
               <span><strong>{modelModes.find((item) => item.id === modelMode)?.label}</strong><small>Current view</small></span>
             </div>
+            <div className="spatial-tools">
+              <button className={showSpatialZones ? "active" : ""} onClick={() => setShowSpatialZones((value) => !value)}><Layers3 size={14} /> Zones</button>
+              <button onClick={() => setIsZoneModalOpen(true)}><Plus size={14} /> Create zone</button>
+              {placementAssertionId && <button className="danger" onClick={() => setPlacementAssertionId(null)}><X size={14} /> Cancel pin</button>}
+            </div>
+            {placementAssertionId && <p className="placement-note">Click a precise spot on the current 3D view to pin the selected evidence.</p>}
             <div className="system-evidence-index">
               <div className="model-panel-heading">
                 <span>System evidence</span>
@@ -377,6 +487,32 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                     <p>{event.summary}</p>
                   </article>
                 ))}
+              </div>
+            </aside>
+          )}
+
+          {modelDrawerAssertion && (
+            <aside className="model-evidence-drawer" aria-label={`${modelDrawerAssertion.title} evidence pin`}>
+              <div className="model-drawer-header">
+                <div><span className="eyebrow">Pinned evidence</span><h2>{modelDrawerAssertion.title}</h2></div>
+                <button className="icon-button" title="Close evidence" aria-label="Close evidence" onClick={() => setModelDrawerAssertionId(null)}><X size={18} /></button>
+              </div>
+              <div className="model-history-list">
+                <article className="model-finding">
+                  <EvidencePreview media={twin.mediaAssets.find((item) => modelDrawerAssertion.mediaIds.includes(item.id))} alt={`Evidence for ${modelDrawerAssertion.title}`} className="model-photo-link" />
+                  <div>
+                    <span className={`severity ${modelDrawerAssertion.severity}`}>{modelDrawerAssertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{modelDrawerAssertion.severity}</span>
+                    <h3>{modelDrawerAssertion.title}</h3>
+                    <p>{modelDrawerAssertion.detail}</p>
+                    {modelDrawerPin && (
+                      <small>
+                        {twin.spatialZones.find((zone) => zone.id === modelDrawerPin.zoneId)?.name ?? "Exact model point"} · {Math.round(modelDrawerPin.confidence * 100)}% spatial confidence
+                      </small>
+                    )}
+                    <button className="text-action" onClick={() => startPinPlacement(modelDrawerAssertion.id)}><MapPin size={13} /> Re-pin on model</button>
+                    <button className="text-action" onClick={() => openEvidenceManager(modelDrawerAssertion.id)}><Pencil size={13} /> Manage tags</button>
+                  </div>
+                </article>
               </div>
             </aside>
           )}
@@ -625,6 +761,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                               {locationEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                             </select>
                             <button className="primary-button" disabled={reviewingId?.startsWith(`${assertion.id}:`)}><Plus size={15} /> Add location</button>
+                            <button type="button" className="secondary-button" onClick={() => startPinPlacement(assertion.id)}><MapPin size={15} /> Pin on model</button>
                           </form>
                         </div>
                       </article>
@@ -712,6 +849,41 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
               <div className="modal-actions">
                 <button type="button" className="secondary-button" onClick={() => setIsModalOpen(false)}>Cancel</button>
                 <button className="primary-button" disabled={isSaving}>{isSaving ? <><Clock3 size={16} /> Saving</> : <><Plus size={16} /> Add to history</>}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isZoneModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setIsZoneModalOpen(false)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="zone-title">
+            <div className="modal-header">
+              <div><span className="eyebrow">Spatial model</span><h2 id="zone-title">Create a zone</h2></div>
+              <button className="icon-button" title="Close" aria-label="Close" onClick={() => setIsZoneModalOpen(false)}><X size={19} /></button>
+            </div>
+            <form onSubmit={submitZone}>
+              <label>Zone name<input name="name" required placeholder="Rear left foundation" /></label>
+              <div className="form-grid two">
+                <label>Zone type<select name="zoneType" defaultValue={modelMode === "exterior" ? "facade" : "room"}><option value="room">Room</option><option value="facade">Facade</option><option value="yard">Yard</option><option value="roof">Roof</option><option value="system-area">System area</option><option value="custom">Custom</option></select></label>
+                <label>Shape<select name="geometryKind" defaultValue={modelMode === "exterior" ? "box" : "box"}><option value="box">Box</option><option value="plane">Ground plane</option></select></label>
+              </div>
+              <label>Optional linked place<select name="entityId" defaultValue=""><option value="">No existing place</option>{locationEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label>
+              <div className="form-grid three">
+                <label>X<input name="x" type="number" step="0.1" defaultValue="0" /></label>
+                <label>Y<input name="y" type="number" step="0.1" defaultValue={modelMode === "exterior" ? "1" : "0.4"} /></label>
+                <label>Z<input name="z" type="number" step="0.1" defaultValue="0" /></label>
+              </div>
+              <div className="form-grid three">
+                <label>Width<input name="width" type="number" min="0.5" step="0.1" defaultValue="8" /></label>
+                <label>Height<input name="height" type="number" min="0.1" step="0.1" defaultValue={modelMode === "exterior" ? "5" : "0.9"} /></label>
+                <label>Depth<input name="depth" type="number" min="0.5" step="0.1" defaultValue="8" /></label>
+              </div>
+              <label>Color<input name="color" type="color" defaultValue="#dfece5" /></label>
+              {error && <p className="form-error">{error}</p>}
+              <div className="modal-actions">
+                <button type="button" className="secondary-button" onClick={() => setIsZoneModalOpen(false)}>Cancel</button>
+                <button className="primary-button"><Plus size={16} /> Create zone</button>
               </div>
             </form>
           </div>

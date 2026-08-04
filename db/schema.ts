@@ -135,3 +135,40 @@ export const reviewDecisions = sqliteTable("review_decisions", {
   note: text("note").notNull(),
   decidedAt: text("decided_at").notNull(),
 });
+
+export const spatialZones = sqliteTable("spatial_zones", {
+  id: text("id").primaryKey(),
+  homeId: text("home_id").notNull(),
+  entityId: text("entity_id"),
+  name: text("name").notNull(),
+  mode: text("mode").notNull(),
+  zoneType: text("zone_type").notNull(),
+  geometryKind: text("geometry_kind").notNull(),
+  x: real("x").notNull(),
+  y: real("y").notNull(),
+  z: real("z").notNull(),
+  width: real("width").notNull(),
+  height: real("height").notNull(),
+  depth: real("depth").notNull(),
+  color: text("color").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const evidencePins = sqliteTable("evidence_pins", {
+  id: text("id").primaryKey(),
+  homeId: text("home_id").notNull(),
+  assertionId: text("assertion_id").notNull(),
+  mediaId: text("media_id"),
+  zoneId: text("zone_id"),
+  entityId: text("entity_id"),
+  mode: text("mode").notNull(),
+  x: real("x").notNull(),
+  y: real("y").notNull(),
+  z: real("z").notNull(),
+  label: text("label").notNull(),
+  confidence: real("confidence").notNull(),
+  status: text("status").notNull(),
+  rationale: text("rationale").notNull(),
+  createdAt: text("created_at").notNull(),
+});

@@ -105,6 +105,43 @@ export type MediaAsset = {
   storageStatus: string;
 };
 
+export type SpatialZone = {
+  id: string;
+  homeId: string;
+  entityId: string | null;
+  name: string;
+  mode: "exterior" | "first" | "second" | "lower" | "garage";
+  zoneType: "room" | "facade" | "yard" | "roof" | "system-area" | "custom";
+  geometryKind: "box" | "plane";
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  height: number;
+  depth: number;
+  color: string;
+  status: "active" | "draft";
+  createdAt: string;
+};
+
+export type EvidencePin = {
+  id: string;
+  homeId: string;
+  assertionId: string;
+  mediaId: string | null;
+  zoneId: string | null;
+  entityId: string | null;
+  mode: SpatialZone["mode"];
+  x: number;
+  y: number;
+  z: number;
+  label: string;
+  confidence: number;
+  status: "proposed" | "approved";
+  rationale: string;
+  createdAt: string;
+};
+
 export type TwinPayload = {
   home: HomeProfile;
   entities: TwinEntity[];
@@ -113,6 +150,8 @@ export type TwinPayload = {
   documents: SourceDocument[];
   assertions: InspectionAssertion[];
   mediaAssets: MediaAsset[];
+  spatialZones: SpatialZone[];
+  evidencePins: EvidencePin[];
 };
 
 export const baselineHome: HomeProfile = {
@@ -304,6 +343,90 @@ export const drivePhotoWalkEvent: TwinEvent = {
   evidenceIds: ["ev-physical-ai-exterior-photo-walk"],
 };
 
+export const baselineSpatialZones: SpatialZone[] = [
+  { id: "zone-foyer", homeId: baselineHome.id, entityId: "foyer", name: "Foyer", mode: "first", zoneType: "room", geometryKind: "box", x: -12, y: 0.42, z: 19, width: 8, height: 0.9, depth: 11, color: "#e2ddd2", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-dining-room", homeId: baselineHome.id, entityId: "dining-room", name: "Dining room", mode: "first", zoneType: "room", geometryKind: "box", x: 6, y: 0.42, z: 20, width: 15, height: 0.9, depth: 10, color: "#c9d9c8", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-living-room", homeId: baselineHome.id, entityId: "living-room", name: "Living room", mode: "first", zoneType: "room", geometryKind: "box", x: -10, y: 0.42, z: 5, width: 14, height: 0.9, depth: 17, color: "#c9d9c8", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-kitchen", homeId: baselineHome.id, entityId: "kitchen", name: "Kitchen", mode: "first", zoneType: "room", geometryKind: "box", x: 9, y: 0.42, z: 7, width: 17, height: 0.9, depth: 15, color: "#d8c9ac", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-family-room", homeId: baselineHome.id, entityId: "family-room", name: "Family room", mode: "first", zoneType: "room", geometryKind: "box", x: -10, y: 0.42, z: -13, width: 14, height: 0.9, depth: 17, color: "#c9d9c8", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-primary-suite", homeId: baselineHome.id, entityId: "primary-suite", name: "Primary suite", mode: "first", zoneType: "room", geometryKind: "box", x: 9, y: 0.42, z: -10, width: 17, height: 0.9, depth: 14, color: "#c7d3df", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-primary-bathroom", homeId: baselineHome.id, entityId: "primary-bathroom", name: "Primary bathroom", mode: "first", zoneType: "room", geometryKind: "box", x: 9, y: 0.42, z: -22, width: 17, height: 0.9, depth: 8, color: "#d8c9ac", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-main-level-bathroom", homeId: baselineHome.id, entityId: "main-level-bathroom", name: "Main-level bathroom", mode: "first", zoneType: "room", geometryKind: "box", x: -1, y: 0.42, z: -22, width: 6, height: 0.9, depth: 8, color: "#d8c9ac", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-laundry", homeId: baselineHome.id, entityId: "laundry", name: "Laundry", mode: "first", zoneType: "room", geometryKind: "box", x: -14, y: 0.42, z: -21, width: 7, height: 0.9, depth: 8, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-loft", homeId: baselineHome.id, entityId: "loft", name: "Loft", mode: "second", zoneType: "room", geometryKind: "box", x: 0, y: 0.42, z: -7, width: 15, height: 0.9, depth: 26, color: "#c9d9c8", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-upper-left-bedroom", homeId: baselineHome.id, entityId: "upper-left-bedroom", name: "Upper left bedroom", mode: "second", zoneType: "room", geometryKind: "box", x: -10.5, y: 0.42, z: 8, width: 12, height: 0.9, depth: 12, color: "#c7d3df", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-upper-right-bedroom", homeId: baselineHome.id, entityId: "upper-right-bedroom", name: "Upper right bedroom", mode: "second", zoneType: "room", geometryKind: "box", x: 10.5, y: 0.42, z: 8, width: 14, height: 0.9, depth: 12, color: "#c7d3df", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-upstairs-hall-bathroom", homeId: baselineHome.id, entityId: "upstairs-hall-bathroom", name: "Upstairs hall bathroom", mode: "second", zoneType: "room", geometryKind: "box", x: 0, y: 0.42, z: 20, width: 7.5, height: 0.9, depth: 13.5, color: "#d8c9ac", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-attic", homeId: baselineHome.id, entityId: "attic", name: "Attic", mode: "second", zoneType: "room", geometryKind: "box", x: 0, y: 0.42, z: -18, width: 12, height: 0.9, depth: 9, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-cellar", homeId: baselineHome.id, entityId: "cellar", name: "Cellar", mode: "lower", zoneType: "room", geometryKind: "box", x: 7, y: 0.42, z: 3, width: 20, height: 0.9, depth: 25, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-crawlspace", homeId: baselineHome.id, entityId: "crawlspace", name: "Crawlspace", mode: "lower", zoneType: "system-area", geometryKind: "box", x: -8, y: 0.42, z: -6, width: 15, height: 0.9, depth: 33, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-garage", homeId: baselineHome.id, entityId: "garage", name: "Detached garage", mode: "garage", zoneType: "room", geometryKind: "box", x: 0, y: 0.42, z: 0, width: 11, height: 0.9, depth: 19, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-front-door", homeId: baselineHome.id, entityId: "front-entry", name: "Front door", mode: "exterior", zoneType: "facade", geometryKind: "box", x: -11, y: 4, z: 27.2, width: 6, height: 8, depth: 1.2, color: "#d8c9ac", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-front-left-facade", homeId: baselineHome.id, entityId: "front-yard", name: "Front-left facade", mode: "exterior", zoneType: "facade", geometryKind: "box", x: -10, y: 5.2, z: 27, width: 15, height: 10, depth: 1.2, color: "#c7d3df", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-front-right-facade", homeId: baselineHome.id, entityId: "front-yard", name: "Front-right facade", mode: "exterior", zoneType: "facade", geometryKind: "box", x: 9, y: 5.2, z: 27, width: 18, height: 10, depth: 1.2, color: "#c7d3df", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-left-side-wall", homeId: baselineHome.id, entityId: "left-side-exterior", name: "Left side wall", mode: "exterior", zoneType: "facade", geometryKind: "box", x: -18.5, y: 5.2, z: 0, width: 1.2, height: 10, depth: 52, color: "#dfece5", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-rear-left-corner", homeId: baselineHome.id, entityId: "rear-exterior", name: "Rear-left corner", mode: "exterior", zoneType: "facade", geometryKind: "box", x: -13, y: 5.2, z: -27, width: 10, height: 10, depth: 1.2, color: "#f5ead5", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-rear-facade", homeId: baselineHome.id, entityId: "rear-exterior", name: "Rear facade", mode: "exterior", zoneType: "facade", geometryKind: "box", x: 5, y: 5.2, z: -27, width: 24, height: 10, depth: 1.2, color: "#f5ead5", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-backyard", homeId: baselineHome.id, entityId: "yard", name: "Backyard", mode: "exterior", zoneType: "yard", geometryKind: "plane", x: 0, y: 0.04, z: -46, width: 58, height: 0.1, depth: 36, color: "#dfece5", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-driveway", homeId: baselineHome.id, entityId: "driveway", name: "Driveway", mode: "exterior", zoneType: "yard", geometryKind: "plane", x: 27, y: 0.05, z: 22, width: 13, height: 0.1, depth: 74, color: "#e2ddd2", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+  { id: "zone-garage-front", homeId: baselineHome.id, entityId: "garage", name: "Garage front", mode: "exterior", zoneType: "facade", geometryKind: "box", x: 28, y: 3.8, z: 14, width: 11, height: 7, depth: 1.2, color: "#c8c5bd", status: "active", createdAt: "2026-08-03T15:30:00.000Z" },
+];
+
+const photoPinPositions: Record<string, { zoneId: string; entityId: string; position: [number, number, number] }> = {
+  "IMG_5270.HEIC": { zoneId: "zone-front-door", entityId: "front-entry", position: [-11, 4.2, 27.9] },
+  "IMG_5271.HEIC": { zoneId: "zone-front-door", entityId: "front-entry", position: [-10.2, 4.2, 27.9] },
+  "IMG_5272.HEIC": { zoneId: "zone-front-left-facade", entityId: "front-yard", position: [-15, 5.5, 28] },
+  "IMG_5273.HEIC": { zoneId: "zone-front-left-facade", entityId: "front-yard", position: [-10, 5.6, 28] },
+  "IMG_5274.HEIC": { zoneId: "zone-front-right-facade", entityId: "front-yard", position: [0, 5.6, 28] },
+  "IMG_5275.HEIC": { zoneId: "zone-front-right-facade", entityId: "front-yard", position: [8, 5.6, 28] },
+  "IMG_5276.HEIC": { zoneId: "zone-front-right-facade", entityId: "front-yard", position: [14, 5.6, 28] },
+  "IMG_5277.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, 19] },
+  "IMG_5278.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, 12] },
+  "IMG_5279.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, 5] },
+  "IMG_5280.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, -2] },
+  "IMG_5281.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, -9] },
+  "IMG_5282.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, -16] },
+  "IMG_5283.HEIC": { zoneId: "zone-left-side-wall", entityId: "left-side-exterior", position: [-19.2, 5.5, -23] },
+  "IMG_5284.HEIC": { zoneId: "zone-rear-left-corner", entityId: "rear-exterior", position: [-16, 5.5, -28] },
+  "IMG_5285.HEIC": { zoneId: "zone-rear-left-corner", entityId: "rear-exterior", position: [-10, 5.5, -28] },
+  "IMG_5286.HEIC": { zoneId: "zone-rear-facade", entityId: "rear-exterior", position: [-4, 5.5, -28] },
+  "IMG_5287.HEIC": { zoneId: "zone-rear-facade", entityId: "rear-exterior", position: [2, 5.5, -28] },
+  "IMG_5288.HEIC": { zoneId: "zone-rear-facade", entityId: "rear-exterior", position: [8, 5.5, -28] },
+  "IMG_5289.HEIC": { zoneId: "zone-rear-facade", entityId: "rear-exterior", position: [14, 5.5, -28] },
+  "IMG_5290.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [-20, 1.2, -38] },
+  "IMG_5291.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [-15, 1.2, -43] },
+  "IMG_5292.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [-10, 1.2, -48] },
+  "IMG_5293.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [-5, 1.2, -52] },
+  "IMG_5294.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [0, 1.2, -55] },
+  "IMG_5295.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [5, 1.2, -52] },
+  "IMG_5296.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [10, 1.2, -48] },
+  "IMG_5297.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [15, 1.2, -43] },
+  "IMG_5298.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [20, 1.2, -38] },
+  "IMG_5299.HEIC": { zoneId: "zone-backyard", entityId: "yard", position: [24, 1.2, -34] },
+};
+
+export const drivePhotoWalkPins: EvidencePin[] = drivePhotoWalkFiles.map(([filename], index) => {
+  const target = photoPinPositions[filename];
+  const [x, y, z] = target.position;
+  return {
+    id: `pin-physical-ai-${filename.toLowerCase().replace(".heic", "")}`,
+    homeId: baselineHome.id,
+    assertionId: `assert-physical-ai-${filename.toLowerCase().replace(".heic", "")}`,
+    mediaId: `media-physical-ai-${filename.toLowerCase().replace(".heic", "")}`,
+    zoneId: target.zoneId,
+    entityId: target.entityId,
+    mode: "exterior",
+    x,
+    y,
+    z,
+    label: `Frame ${index + 1}`,
+    confidence: index < 2 ? 0.9 : 0.78,
+    status: index < 2 ? "approved" : "proposed",
+    rationale: "Initial spatial pin inferred from the homeowner-described photo-walk sequence; refine manually if the photo view is more specific.",
+    createdAt: "2026-08-03T15:30:00.000Z",
+  };
+});
+
 export const baselineTwin: TwinPayload = {
   home: baselineHome,
   entities: baselineEntities,
@@ -312,4 +435,6 @@ export const baselineTwin: TwinPayload = {
   documents: [drivePhotoWalkDocument],
   assertions: drivePhotoWalkAssertions,
   mediaAssets: drivePhotoWalkMedia,
+  spatialZones: baselineSpatialZones,
+  evidencePins: drivePhotoWalkPins,
 };

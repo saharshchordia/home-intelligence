@@ -5,23 +5,31 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { modelModes, roomZones, type ModelMode } from "../../lib/model-layout";
+import type { SpatialZone } from "../../lib/twin-data";
 
 export type ModelPin = {
-  entityId: string;
+  id: string;
+  entityId?: string | null;
+  assertionId?: string;
   label: string;
   count: number;
   severity: "maintenance" | "recommendation" | "safety";
   mode: ModelMode;
   position: [number, number, number];
+  kind?: "entity" | "evidence";
 };
 
 type HouseModelProps = {
   mode: ModelMode;
   pins: ModelPin[];
+  zones: SpatialZone[];
+  showZones: boolean;
+  placementAssertionId?: string | null;
   selectedEntityId: string;
   onModeChange(mode: ModelMode): void;
   onSelectEntity(entityId: string): void;
-  onSelectPin(entityId: string): void;
+  onSelectPin(pin: ModelPin): void;
+  onPlaceEvidence?(placement: { mode: ModelMode; position: [number, number, number]; entityId?: string | null; zoneId?: string | null }): void;
 };
 
 const toneColors = {
@@ -196,6 +204,30 @@ function buildExterior() {
   return group;
 }
 
+function zoneMesh(zone: SpatialZone) {
+  const geometry = new THREE.BoxGeometry(zone.width, Math.max(zone.height, 0.08), zone.depth);
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(zone.color),
+    transparent: true,
+    opacity: zone.mode === "exterior" ? 0.34 : 0.22,
+    roughness: 0.7,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(zone.x, zone.y, zone.z);
+  mesh.userData.entityId = zone.entityId;
+  mesh.userData.zoneId = zone.id;
+  mesh.userData.clickable = true;
+  mesh.userData.spatialZone = true;
+  addEdges(mesh, 0x214c3c);
+  const sprite = labelSprite(zone.name);
+  if (sprite) {
+    sprite.position.set(0, Math.max(zone.height / 2 + 1.2, 1.3), 0);
+    mesh.add(sprite);
+  }
+  return mesh;
+}
+
 function buildGaragePlan() {
   const group = roomGroup("garage");
   const door = new THREE.Mesh(
@@ -207,20 +239,29 @@ function buildGaragePlan() {
   return group;
 }
 
-export default function HouseModel({ mode, pins, selectedEntityId, onModeChange, onSelectEntity, onSelectPin }: HouseModelProps) {
+export default function HouseModel({ mode, pins, zones, showZones, placementAssertionId, selectedEntityId, onModeChange, onSelectEntity, onSelectPin, onPlaceEvidence }: HouseModelProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const pinLayerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const groupsRef = useRef<Record<ModelMode, THREE.Group> | null>(null);
+  const zoneGroupsRef = useRef<Record<ModelMode, THREE.Group> | null>(null);
   const modeRef = useRef(mode);
   const pinsRef = useRef(pins);
+  const zonesRef = useRef(zones);
+  const showZonesRef = useRef(showZones);
+  const placementAssertionIdRef = useRef(placementAssertionId);
+  const onPlaceEvidenceRef = useRef(onPlaceEvidence);
   const selectedRef = useRef(selectedEntityId);
   const onSelectEntityRef = useRef(onSelectEntity);
   const visiblePins = useMemo(() => pins.filter((pin) => pin.mode === mode), [mode, pins]);
 
   useEffect(() => { pinsRef.current = pins; }, [pins]);
+  useEffect(() => { zonesRef.current = zones; }, [zones]);
+  useEffect(() => { showZonesRef.current = showZones; }, [showZones]);
+  useEffect(() => { placementAssertionIdRef.current = placementAssertionId; }, [placementAssertionId]);
+  useEffect(() => { onPlaceEvidenceRef.current = onPlaceEvidence; }, [onPlaceEvidence]);
   useEffect(() => { onSelectEntityRef.current = onSelectEntity; }, [onSelectEntity]);
 
   useEffect(() => {
@@ -237,12 +278,20 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
   useEffect(() => {
     modeRef.current = mode;
     const groups = groupsRef.current;
+    const zoneGroups = zoneGroupsRef.current;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!groups || !camera || !controls) return;
     for (const [id, group] of Object.entries(groups)) group.visible = id === mode;
+    if (zoneGroups) for (const [id, group] of Object.entries(zoneGroups)) group.visible = id === mode && showZonesRef.current;
     applyCameraView(camera, controls, mode);
   }, [mode]);
+
+  useEffect(() => {
+    const zoneGroups = zoneGroupsRef.current;
+    if (!zoneGroups) return;
+    for (const [id, group] of Object.entries(zoneGroups)) group.visible = id === modeRef.current && showZones;
+  }, [showZones]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -289,14 +338,28 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
       lower: roomGroup("lower"),
       garage: buildGaragePlan(),
     };
+    const zoneGroups: Record<ModelMode, THREE.Group> = {
+      exterior: new THREE.Group(),
+      first: new THREE.Group(),
+      second: new THREE.Group(),
+      lower: new THREE.Group(),
+      garage: new THREE.Group(),
+    };
+    for (const zone of zonesRef.current) zoneGroups[zone.mode].add(zoneMesh(zone));
     for (const [id, group] of Object.entries(groups)) {
       group.visible = id === modeRef.current;
+      scene.add(group);
+    }
+    for (const [id, group] of Object.entries(zoneGroups)) {
+      group.name = `${id}-zones`;
+      group.visible = id === modeRef.current && showZonesRef.current;
       scene.add(group);
     }
     sceneRef.current = scene;
     cameraRef.current = camera;
     controlsRef.current = controls;
     groupsRef.current = groups;
+    zoneGroupsRef.current = zoneGroups;
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -315,6 +378,16 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
     const onPointerUp = (event: PointerEvent) => {
       if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
       const hit = intersections(event)[0];
+      if (placementAssertionIdRef.current && hit) {
+        const point = hit.point;
+        onPlaceEvidenceRef.current?.({
+          mode: modeRef.current,
+          position: [Number(point.x.toFixed(2)), Number(point.y.toFixed(2)), Number(point.z.toFixed(2))],
+          entityId: hit.object.userData.entityId ?? null,
+          zoneId: hit.object.userData.zoneId ?? null,
+        });
+        return;
+      }
       const entityId = hit?.object.userData.entityId;
       if (entityId) onSelectEntityRef.current(entityId);
     };
@@ -346,7 +419,7 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
       if (layer) {
         const rect = renderer.domElement.getBoundingClientRect();
         for (const pin of pinsRef.current) {
-          const element = layer.querySelector<HTMLElement>(`[data-pin-id="${pin.entityId}"]`);
+          const element = layer.querySelector<HTMLElement>(`[data-pin-id="${pin.id}"]`);
           if (!element || pin.mode !== modeRef.current) continue;
           projected.set(...pin.position).project(camera);
           const visible = projected.z > -1 && projected.z < 1;
@@ -377,6 +450,7 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
       cameraRef.current = null;
       controlsRef.current = null;
       groupsRef.current = null;
+      zoneGroupsRef.current = null;
     };
   }, []);
 
@@ -386,14 +460,14 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
       <div ref={pinLayerRef} className="model-pin-layer">
         {visiblePins.map((pin) => (
           <button
-            key={pin.entityId}
-            data-pin-id={pin.entityId}
-            className={`model-pin ${pin.severity}`}
-            aria-label={`${pin.count} accepted ${pin.count === 1 ? "finding" : "findings"} at ${pin.label}`}
+            key={pin.id}
+            data-pin-id={pin.id}
+            className={`model-pin ${pin.severity} ${pin.kind === "evidence" ? "evidence-pin" : ""}`}
+            aria-label={pin.kind === "evidence" ? `Evidence pin for ${pin.label}` : `${pin.count} accepted ${pin.count === 1 ? "finding" : "findings"} at ${pin.label}`}
             title={pin.label}
-            onClick={() => onSelectPin(pin.entityId)}
+            onClick={() => onSelectPin(pin)}
           >
-            <span>{pin.count}</span>
+            <span>{pin.kind === "evidence" ? "•" : pin.count}</span>
           </button>
         ))}
       </div>
@@ -405,7 +479,7 @@ export default function HouseModel({ mode, pins, selectedEntityId, onModeChange,
           </button>
         ))}
       </div>
-      <div className="model-status"><Focus size={14} /> Report-derived geometry</div>
+      <div className="model-status"><Focus size={14} /> {placementAssertionId ? "Click the model to place evidence" : showZones ? "Spatial zones visible" : "Report-derived geometry"}</div>
       <div className="orbit-status" aria-hidden="true"><Rotate3D size={14} /></div>
     </div>
   );
