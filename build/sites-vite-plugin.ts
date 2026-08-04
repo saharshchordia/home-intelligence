@@ -1,4 +1,4 @@
-import { access, cp, mkdir, rm } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
 
@@ -39,6 +39,19 @@ export function sites(): Plugin {
         await cp(drizzleSource, resolve(outputDirectory, "drizzle"), {
           recursive: true,
         });
+      }
+
+      const wranglerConfig = resolve(root, "dist", "server", "wrangler.json");
+      if (await exists(wranglerConfig)) {
+        const rawConfig = await readFile(wranglerConfig, "utf8");
+        const parsedConfig = JSON.parse(rawConfig) as {
+          compatibility_flags?: string[];
+        };
+
+        if (parsedConfig.compatibility_flags?.length === 0) {
+          delete parsedConfig.compatibility_flags;
+          await writeFile(wranglerConfig, JSON.stringify(parsedConfig));
+        }
       }
     },
   };
