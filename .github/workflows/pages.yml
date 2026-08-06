@@ -33,6 +33,7 @@ jobs:
           VITE_HOME_API_BASE_URL: https://jryoxyudbeldzqbnsbfl.functions.supabase.co/home-api
           VITE_SUPABASE_URL: https://jryoxyudbeldzqbnsbfl.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_MeFasTrVGAGOJB4w83AwXg_fAhllD-J
+          VITE_SITE_URL: https://saharshchordia.github.io/home-intelligence/
       - name: Configure Pages
         uses: actions/configure-pages@v6
       - name: Upload artifact

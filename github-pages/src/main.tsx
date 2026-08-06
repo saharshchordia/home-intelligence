@@ -9,6 +9,7 @@ import { baselineTwin } from "../../lib/twin-data";
 const apiBaseUrl = import.meta.env.VITE_HOME_API_BASE_URL as string | undefined;
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
+const siteUrl = (import.meta.env.VITE_SITE_URL as string | undefined) ?? "https://saharshchordia.github.io/home-intelligence/";
 
 function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);
@@ -45,7 +46,7 @@ function AuthGate() {
             setNotice(null);
             const { error } = await supabase.auth.signInWithOtp({
               email,
-              options: { emailRedirectTo: window.location.origin + window.location.pathname },
+              options: { emailRedirectTo: siteUrl },
             });
             setNotice(error ? error.message : "Check your email for a sign-in link.");
           }}>

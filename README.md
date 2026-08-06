@@ -42,7 +42,7 @@ The repository can also publish a read-only frontend to GitHub Pages:
 npm run build:pages
 ```
 
-This build renders the same 3D home model, zones, evidence pins, timeline and seeded evidence metadata from `lib/twin-data.ts`. Without an API URL it stays read-only. Set `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to enable Supabase-backed reads and edits.
+This build renders the same 3D home model, zones, evidence pins, timeline and seeded evidence metadata from `lib/twin-data.ts`. Without an API URL it stays read-only. Set `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` and `VITE_SITE_URL` to enable Supabase-backed reads and edits.
 
 ## Supabase backend
 
@@ -55,14 +55,22 @@ Supabase pieces:
   RLS policies and private `home-evidence` storage bucket.
 - `supabase/functions/home-api/index.ts` exposes the dashboard API surface behind
   Supabase Auth.
-- GitHub Pages needs `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL` and
-  `VITE_SUPABASE_PUBLISHABLE_KEY` at build time.
+- GitHub Pages needs `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_PUBLISHABLE_KEY` and `VITE_SITE_URL` at build time.
 
 The API base URL should look like:
 
 ```text
 https://<project-ref>.functions.supabase.co/home-api
 ```
+
+Supabase Auth URL Configuration should set the Site URL to:
+
+```text
+https://saharshchordia.github.io/home-intelligence/
+```
+
+Add the same value to Redirect URLs for magic-link callbacks.
 
 The frontend uses the publishable key only. Do not put the Supabase service role
 or secret key in GitHub repository variables or frontend source.
