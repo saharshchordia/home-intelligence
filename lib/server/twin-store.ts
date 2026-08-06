@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env as cloudflareEnv } from "cloudflare:workers";
 import {
   baselineEntities,
   baselineEvent,
@@ -20,6 +20,17 @@ import {
   type TwinEvent,
   type TwinPayload,
 } from "../twin-data";
+
+type RuntimeBindings = {
+  DB?: D1Database;
+  EVIDENCE_BUCKET?: R2Bucket;
+};
+
+let runtimeBindings: RuntimeBindings | null = null;
+
+export function configureTwinStore(bindings: RuntimeBindings) {
+  runtimeBindings = bindings;
+}
 
 export const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS homes (id TEXT PRIMARY KEY, name TEXT NOT NULL, location TEXT NOT NULL, acquired_at TEXT NOT NULL, year_built INTEGER NOT NULL, design TEXT NOT NULL, living_area_sq_ft INTEGER NOT NULL, lot_sq_ft INTEGER NOT NULL, room_count INTEGER NOT NULL, bedrooms INTEGER NOT NULL, bathrooms INTEGER NOT NULL, quality_rating TEXT NOT NULL, condition_rating TEXT NOT NULL, source_label TEXT NOT NULL, source_date TEXT NOT NULL)`,
@@ -48,11 +59,13 @@ export const schemaStatements = [
 ];
 
 export function getD1() {
+  const env = runtimeBindings ?? cloudflareEnv;
   if (!env.DB) throw new Error("Home Intelligence database is unavailable.");
   return env.DB;
 }
 
 export function getEvidenceBucket() {
+  const env = runtimeBindings ?? cloudflareEnv;
   const bucket = (env as unknown as { EVIDENCE_BUCKET?: R2Bucket }).EVIDENCE_BUCKET;
   if (!bucket) throw new Error("Private evidence storage is unavailable.");
   return bucket;

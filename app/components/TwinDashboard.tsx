@@ -25,19 +25,17 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import Image from "next/image";
-import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { EntityKind, InspectionAssertion, MediaAsset, TwinPayload } from "../../lib/twin-data";
 import { modelModes, modelPlacements, type ModelMode } from "../../lib/model-layout";
+import HouseModel from "./HouseModel";
 import type { ModelPin } from "./HouseModel";
-
-const HouseModel = dynamic(() => import("./HouseModel"), { ssr: false });
 
 const tabs = ["Home model", "Overview", "Places", "Systems", "Timeline", "Evidence review"] as const;
 type Tab = (typeof tabs)[number];
 type ReviewDecision = "approve" | "reject" | "move" | "add" | "remove";
 type EvidenceFilter = "needs-review" | "accepted" | "all";
+type DashboardMode = "live" | "static";
 
 const conditionTone: Record<string, string> = {
   C3: "green",
@@ -69,30 +67,31 @@ function driveFileId(objectKey: string) {
   return objectKey.startsWith("drive://") ? objectKey.replace("drive://", "") : null;
 }
 
-function mediaPreviewUrl(media?: MediaAsset) {
+function mediaPreviewUrl(media: MediaAsset | undefined, mode: DashboardMode, apiBaseUrl?: string) {
   if (!media) return null;
   const fileId = driveFileId(media.objectKey);
   if (fileId) return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
-  if (media.storageStatus === "stored") return `/api/evidence?id=${media.id}`;
+  if (mode === "static" && !apiBaseUrl) return null;
+  if (media.storageStatus === "stored") return `${apiBaseUrl ?? ""}/api/evidence?id=${media.id}`;
   return null;
 }
 
-function mediaOpenUrl(media?: MediaAsset) {
+function mediaOpenUrl(media: MediaAsset | undefined, mode: DashboardMode, apiBaseUrl?: string) {
   if (!media) return null;
   const fileId = driveFileId(media.objectKey);
   if (fileId) return `https://drive.google.com/file/d/${fileId}/view`;
-  if (media.storageStatus === "stored") return `/api/evidence?id=${media.id}`;
+  if (mode === "static" && !apiBaseUrl) return null;
+  if (media.storageStatus === "stored") return `${apiBaseUrl ?? ""}/api/evidence?id=${media.id}`;
   return null;
 }
 
-function EvidencePreview({ media, alt, className }: { media?: MediaAsset; alt: string; className: string }) {
-  const src = mediaPreviewUrl(media);
-  const href = mediaOpenUrl(media);
+function EvidencePreview({ media, alt, className, mode, apiBaseUrl }: { media?: MediaAsset; alt: string; className: string; mode: DashboardMode; apiBaseUrl?: string }) {
+  const src = mediaPreviewUrl(media, mode, apiBaseUrl);
+  const href = mediaOpenUrl(media, mode, apiBaseUrl);
   if (!src || !href) return null;
-  const isExternalPreview = src.startsWith("https://");
   return (
     <a className={className} href={href} target="_blank" rel="noreferrer">
-      {isExternalPreview ? <img src={src} alt={alt} loading="lazy" decoding="async" /> : <Image src={src} alt={alt} width={420} height={260} unoptimized />}
+      <img src={src} alt={alt} loading="lazy" decoding="async" />
       {media && <span>{media.documentId === "physical-ai-exterior-2026-08-02" ? `Frame ${media.sourcePage}` : `Report page ${media.sourcePage}`}</span>}
     </a>
   );
@@ -104,7 +103,7 @@ function sourceLabel(assertion: InspectionAssertion, twin: TwinPayload) {
   return `Reported at acquisition · Page ${assertion.sourcePage}`;
 }
 
-export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
+export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken }: { initialTwin: TwinPayload; mode?: DashboardMode; apiBaseUrl?: string; apiToken?: string }) {
   const [twin, setTwin] = useState(initialTwin);
   const [activeTab, setActiveTab] = useState<Tab>("Home model");
   const [selectedEntityId, setSelectedEntityId] = useState("home");
@@ -121,13 +120,21 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   const [evidenceFilter, setEvidenceFilter] = useState<EvidenceFilter>("needs-review");
   const [focusedAssertionId, setFocusedAssertionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const normalizedApiBaseUrl = apiBaseUrl?.replace(/\/$/, "");
+  const isStaticMode = mode === "static" && !normalizedApiBaseUrl;
+  const apiUrl = (path: string) => `${normalizedApiBaseUrl ?? ""}${path}`;
+  const apiHeaders = {
+    "content-type": "application/json",
+    ...(apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
+  };
 
   useEffect(() => {
-    fetch("/api/twin")
+    if (isStaticMode) return;
+    fetch(apiUrl("/api/twin"))
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Database preview unavailable")))
       .then((payload: TwinPayload) => setTwin(payload))
       .catch(() => undefined);
-  }, []);
+  }, [isStaticMode, normalizedApiBaseUrl]);
 
   const selectedEntity = twin.entities.find((entity) => entity.id === selectedEntityId) ?? twin.entities[0];
   const locationEntities = useMemo(() => twin.entities.filter((entity) => entity.kind !== "system" && !retiredLocationIds.has(entity.id)), [twin.entities]);
@@ -273,12 +280,17 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
 
   async function placeEvidenceOnModel(placement: { mode: ModelMode; position: [number, number, number]; entityId?: string | null; zoneId?: string | null }) {
     if (!placementAssertionId) return;
+    if (isStaticMode) {
+      setError("GitHub Pages preview is read-only. Location edits will be enabled after the standalone backend is connected.");
+      setPlacementAssertionId(null);
+      return;
+    }
     const assertion = twin.assertions.find((item) => item.id === placementAssertionId);
     setError(null);
     try {
-      const response = await fetch("/api/spatial", {
+      const response = await fetch(apiUrl("/api/spatial"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: apiHeaders,
         body: JSON.stringify({
           action: "pin-evidence",
           assertionId: placementAssertionId,
@@ -301,12 +313,16 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
 
   async function submitZone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isStaticMode) {
+      setError("GitHub Pages preview is read-only. Zone creation will be enabled after the standalone backend is connected.");
+      return;
+    }
     const form = new FormData(event.currentTarget);
     setError(null);
     try {
-      const response = await fetch("/api/spatial", {
+      const response = await fetch(apiUrl("/api/spatial"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: apiHeaders,
         body: JSON.stringify({
           action: "create-zone",
           name: form.get("name"),
@@ -330,12 +346,17 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
   }
 
   async function submitReview(assertionId: string, entityId: string | undefined, decision: ReviewDecision, targetEntityId?: string) {
+    if (isStaticMode) {
+      setError("GitHub Pages preview is read-only. Evidence tag edits will be enabled after the standalone backend is connected.");
+      setFocusedAssertionId(assertionId);
+      return;
+    }
     setReviewingId(`${assertionId}:${entityId ?? targetEntityId ?? "new"}:${decision}`);
     setError(null);
     try {
-      const response = await fetch("/api/review", {
+      const response = await fetch(apiUrl("/api/review"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: apiHeaders,
         body: JSON.stringify({ assertionId, entityId, decision, targetEntityId }),
       });
       const payload = await response.json();
@@ -351,14 +372,18 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
 
   async function submitUpdate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isStaticMode) {
+      setError("GitHub Pages preview is read-only. New history updates will be enabled after the standalone backend is connected.");
+      return;
+    }
     setIsSaving(true);
     setError(null);
     const form = new FormData(event.currentTarget);
     const entityIds = form.getAll("entityIds").map(String);
     try {
-      const response = await fetch("/api/twin", {
+      const response = await fetch(apiUrl("/api/twin"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: apiHeaders,
         body: JSON.stringify({
           occurredAt: form.get("occurredAt"),
           title: form.get("title"),
@@ -393,8 +418,8 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
           <span>{twin.home.name}</span>
           <span className="identity-location"><MapPin size={14} /> {twin.home.location}</span>
         </div>
-        <button className="primary-button" onClick={() => setIsModalOpen(true)}>
-          <Plus size={17} /> Add update
+        <button className="primary-button" disabled={isStaticMode} onClick={() => setIsModalOpen(true)} title={isStaticMode ? "Read-only GitHub Pages preview" : "Add update"}>
+          {isStaticMode ? <><ShieldCheck size={17} /> Read-only</> : <><Plus size={17} /> Add update</>}
         </button>
       </header>
 
@@ -404,7 +429,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
             {tab}{tab === "Evidence review" && pendingReviews.length > 0 ? <span className="tab-count">{pendingReviews.length}</span> : null}
           </button>
         ))}
-        <span className="private-source"><ShieldCheck size={15} /> Private evidence</span>
+        <span className="private-source"><ShieldCheck size={15} /> {isStaticMode ? "Static GitHub Pages preview" : "Private evidence"}</span>
       </nav>
 
       {activeTab === "Home model" ? (
@@ -431,7 +456,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
             </div>
             <div className="spatial-tools">
               <button className={showSpatialZones ? "active" : ""} onClick={() => setShowSpatialZones((value) => !value)}><Layers3 size={14} /> Zones</button>
-              <button onClick={() => setIsZoneModalOpen(true)}><Plus size={14} /> Create zone</button>
+              <button disabled={isStaticMode} onClick={() => setIsZoneModalOpen(true)}><Plus size={14} /> Create zone</button>
               {placementAssertionId && <button className="danger" onClick={() => setPlacementAssertionId(null)}><X size={14} /> Cancel pin</button>}
             </div>
             {placementAssertionId && <p className="placement-note">Click a precise spot on the current 3D view to pin the selected evidence.</p>}
@@ -469,7 +494,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
                   return (
                     <article className="model-finding" key={assertion.id}>
-                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="model-photo-link" />
+                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="model-photo-link" mode={mode} apiBaseUrl={normalizedApiBaseUrl} />
                       <div>
                         <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{assertion.severity}</span>
                         <h3>{assertion.title}</h3>
@@ -499,7 +524,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
               </div>
               <div className="model-history-list">
                 <article className="model-finding">
-                  <EvidencePreview media={twin.mediaAssets.find((item) => modelDrawerAssertion.mediaIds.includes(item.id))} alt={`Evidence for ${modelDrawerAssertion.title}`} className="model-photo-link" />
+                  <EvidencePreview media={twin.mediaAssets.find((item) => modelDrawerAssertion.mediaIds.includes(item.id))} alt={`Evidence for ${modelDrawerAssertion.title}`} className="model-photo-link" mode={mode} apiBaseUrl={normalizedApiBaseUrl} />
                   <div>
                     <span className={`severity ${modelDrawerAssertion.severity}`}>{modelDrawerAssertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{modelDrawerAssertion.severity}</span>
                     <h3>{modelDrawerAssertion.title}</h3>
@@ -509,7 +534,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                         {twin.spatialZones.find((zone) => zone.id === modelDrawerPin.zoneId)?.name ?? "Exact model point"} · {Math.round(modelDrawerPin.confidence * 100)}% spatial confidence
                       </small>
                     )}
-                    <button className="text-action" onClick={() => startPinPlacement(modelDrawerAssertion.id)}><MapPin size={13} /> Re-pin on model</button>
+                    <button className="text-action" disabled={isStaticMode} onClick={() => startPinPlacement(modelDrawerAssertion.id)}><MapPin size={13} /> Re-pin on model</button>
                     <button className="text-action" onClick={() => openEvidenceManager(modelDrawerAssertion.id)}><Pencil size={13} /> Manage tags</button>
                   </div>
                 </article>
@@ -566,7 +591,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
               </strong>
             </div>
             <div className="record-art" aria-hidden="true">
-              <Image src="/og.png" alt="" fill sizes="260px" priority />
+              <img src="og.png" alt="" loading="eager" />
             </div>
           </div>
 
@@ -578,7 +603,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   <h3>Inspection evidence is now part of the record</h3>
                   <p>Every finding remains historical until a later observation or repair verifies its present status.</p>
                 </div>
-                <a className="secondary-button" href={`/api/evidence?id=${twin.documents[0].id}`} target="_blank" rel="noreferrer">
+                <a className="secondary-button" href={isStaticMode ? undefined : apiUrl(`/api/evidence?id=${twin.documents[0].id}`)} aria-disabled={isStaticMode} target="_blank" rel="noreferrer">
                   <FileText size={15} /> Open private report
                 </a>
               </div>
@@ -610,7 +635,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   const pending = assertion.entityLinks.some((link) => link.status === "pending");
                   return (
                     <article className="photo-frame" key={assertion.id}>
-                      <EvidencePreview media={media} alt={`Exterior photo walk frame ${assertion.sourcePage}`} className="photo-frame-image" />
+                      <EvidencePreview media={media} alt={`Exterior photo walk frame ${assertion.sourcePage}`} className="photo-frame-image" mode={mode} apiBaseUrl={normalizedApiBaseUrl} />
                       <div>
                         <span className={accepted ? "link-status auto-accepted" : pending ? "link-status pending" : "link-status"}>{accepted ? "linked" : pending ? "review" : "unassigned"}</span>
                         <strong>{assertion.title}</strong>
@@ -661,7 +686,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                   const media = twin.mediaAssets.find((item) => assertion.mediaIds.includes(item.id));
                   return (
                     <article className="finding-card" key={assertion.id}>
-                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="finding-image" />
+                      <EvidencePreview media={media} alt={`Evidence for ${assertion.title}`} className="finding-image" mode={mode} apiBaseUrl={normalizedApiBaseUrl} />
                       <div className="finding-body">
                         <div className="finding-meta">
                           <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <FileText size={13} />}{assertion.severity}</span>
@@ -700,7 +725,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                     const currentLinks = assertion.entityLinks.filter((link) => link.status !== "rejected");
                     return (
                       <article className={focusedAssertionId === assertion.id ? "review-card focused" : "review-card"} key={assertion.id}>
-                        <EvidencePreview media={media} alt={`Source evidence for ${assertion.title}`} className="review-image" />
+                        <EvidencePreview media={media} alt={`Source evidence for ${assertion.title}`} className="review-image" mode={mode} apiBaseUrl={normalizedApiBaseUrl} />
                         <div className="review-content">
                           <div className="finding-meta">
                             <span className={`severity ${assertion.severity}`}>{assertion.severity === "safety" ? <ShieldAlert size={13} /> : <AlertTriangle size={13} />}{assertion.severity}</span>
@@ -730,11 +755,11 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                                   <div className="review-actions">
                                     {link.status === "pending" ? (
                                       <>
-                                        <button className="primary-button" disabled={reviewingId === `${reviewKey}:approve`} onClick={() => submitReview(assertion.id, link.entityId, "approve")}><Check size={15} /> Approve</button>
-                                        <button className="secondary-button" disabled={reviewingId === `${reviewKey}:reject`} onClick={() => submitReview(assertion.id, link.entityId, "reject")}><X size={15} /> Reject</button>
+                                        <button className="primary-button" disabled={isStaticMode || reviewingId === `${reviewKey}:approve`} onClick={() => submitReview(assertion.id, link.entityId, "approve")}><Check size={15} /> Approve</button>
+                                        <button className="secondary-button" disabled={isStaticMode || reviewingId === `${reviewKey}:reject`} onClick={() => submitReview(assertion.id, link.entityId, "reject")}><X size={15} /> Reject</button>
                                       </>
                                     ) : (
-                                      <button className="secondary-button" disabled={reviewingId === `${reviewKey}:remove`} onClick={() => submitReview(assertion.id, link.entityId, "remove")}><X size={15} /> Remove</button>
+                                      <button className="secondary-button" disabled={isStaticMode || reviewingId === `${reviewKey}:remove`} onClick={() => submitReview(assertion.id, link.entityId, "remove")}><X size={15} /> Remove</button>
                                     )}
                                     <form onSubmit={(event) => {
                                       event.preventDefault();
@@ -744,7 +769,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                                       <select name="targetEntityId" defaultValue={link.entityId} aria-label="Choose a different place">
                                         {locationEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                                       </select>
-                                      <button className="secondary-button" disabled={reviewingId === `${reviewKey}:move`}><Pencil size={15} /> Change</button>
+                                      <button className="secondary-button" disabled={isStaticMode || reviewingId === `${reviewKey}:move`}><Pencil size={15} /> Change</button>
                                     </form>
                                   </div>
                                 </div>
@@ -760,8 +785,8 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                               <option value="" disabled>Add another place</option>
                               {locationEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                             </select>
-                            <button className="primary-button" disabled={reviewingId?.startsWith(`${assertion.id}:`)}><Plus size={15} /> Add location</button>
-                            <button type="button" className="secondary-button" onClick={() => startPinPlacement(assertion.id)}><MapPin size={15} /> Pin on model</button>
+                            <button className="primary-button" disabled={isStaticMode || reviewingId?.startsWith(`${assertion.id}:`)}><Plus size={15} /> Add location</button>
+                            <button type="button" className="secondary-button" disabled={isStaticMode} onClick={() => startPinPlacement(assertion.id)}><MapPin size={15} /> Pin on model</button>
                           </form>
                         </div>
                       </article>
@@ -802,7 +827,7 @@ export function TwinDashboard({ initialTwin }: { initialTwin: TwinPayload }) {
                           const item = twin.evidence.find((evidence) => evidence.id === evidenceId);
                           return item ? (
                             item.id === "ev-acquisition-inspection" ? (
-                              <a className="evidence-link" key={item.id} href="/api/evidence?id=inspection-acquisition-2022" target="_blank" rel="noreferrer"><FileText size={14} /> {item.label}<small>{item.sourceRef}</small></a>
+                              isStaticMode ? <span key={item.id}><FileText size={14} /> {item.label}<small>{item.sourceRef}</small></span> : <a className="evidence-link" key={item.id} href={apiUrl("/api/evidence?id=inspection-acquisition-2022")} target="_blank" rel="noreferrer"><FileText size={14} /> {item.label}<small>{item.sourceRef}</small></a>
                             ) : <span key={item.id}><FileText size={14} /> {item.label}<small>{item.sourceRef}</small></span>
                           ) : null;
                         })}

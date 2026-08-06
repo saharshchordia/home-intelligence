@@ -10,8 +10,8 @@ The included demo baseline is derived from a June 15, 2022 appraisal. Exact addr
 - Phase 2: a reusable tagging model for places, site features and building systems
 - Phase 3: an append-only timeline with condition changes, costs and evidence references
 - A responsive dashboard for browsing the home and recording new events
-- Cloudflare D1 persistence with a reproducible schema and seeded privacy-safe baseline
-- Private R2 storage for source reports and report-page imagery
+- Supabase Postgres persistence with a reproducible schema and seeded privacy-safe baseline
+- Private Supabase Storage for source reports and report-page imagery
 - Confidence-gated assertions with a human review queue for uncertain or safety-critical place links
 
 ## Run locally
@@ -23,15 +23,49 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by the development server. The API creates and seeds the local D1 database on first use.
+Open the local URL printed by the development server. The default local app renders the seeded baseline from source data.
 
 ## Validate
 
 ```bash
 npm run db:generate
 npm run build
+npm run build:pages
 npm test
 ```
+
+## GitHub Pages preview
+
+The repository can also publish a read-only frontend to GitHub Pages:
+
+```bash
+npm run build:pages
+```
+
+This build renders the same 3D home model, zones, evidence pins, timeline and seeded evidence metadata from `lib/twin-data.ts`. Without an API URL it stays read-only. Set `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to enable Supabase-backed reads and edits.
+
+## Supabase backend
+
+Home Intelligence can run as a GitHub Pages frontend backed by Supabase Auth,
+Postgres, Storage and an Edge Function.
+
+Supabase pieces:
+
+- `supabase/migrations/0001_home_intelligence.sql` creates the Postgres schema,
+  RLS policies and private `home-evidence` storage bucket.
+- `supabase/functions/home-api/index.ts` exposes the dashboard API surface behind
+  Supabase Auth.
+- GitHub Pages needs `VITE_HOME_API_BASE_URL`, `VITE_SUPABASE_URL` and
+  `VITE_SUPABASE_PUBLISHABLE_KEY` at build time.
+
+The API base URL should look like:
+
+```text
+https://<project-ref>.functions.supabase.co/home-api
+```
+
+The frontend uses the publishable key only. Do not put the Supabase service role
+or secret key in GitHub repository variables or frontend source.
 
 ## Data model
 
@@ -41,7 +75,7 @@ See [docs/architecture.md](docs/architecture.md) for the model, privacy boundary
 
 ## Privacy boundary
 
-Treat the repository as application source, not the evidence vault. Reports, report pages, photos, warranties and permits live in private object storage, with searchable provenance in D1. The one-time acquisition import manifest is generated outside the repository and is never committed.
+Treat the repository as application source, not the evidence vault. Reports, report pages, photos, warranties and permits live in private object storage, with searchable provenance in Supabase Postgres. The one-time acquisition import manifest is generated outside the repository and is never committed.
 
 ## License
 
