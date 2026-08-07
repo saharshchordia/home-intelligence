@@ -15,6 +15,8 @@ import {
   House,
   Layers3,
   MapPin,
+  MousePointer2,
+  Move,
   Pencil,
   Plus,
   Ruler,
@@ -34,6 +36,7 @@ import type { ModelPin } from "./HouseModel";
 const tabs = ["Home model", "Overview", "Places", "Systems", "Timeline", "Evidence review"] as const;
 type Tab = (typeof tabs)[number];
 type ReviewDecision = "approve" | "reject" | "move" | "add" | "remove";
+type ZoneDraft = { mode: ModelMode; vertices: Array<[number, number, number]> };
 type EvidenceFilter = "needs-review" | "accepted" | "all";
 type DashboardMode = "live" | "static";
 
@@ -111,6 +114,9 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
   const [modelDrawerEntityId, setModelDrawerEntityId] = useState<string | null>(null);
   const [modelDrawerAssertionId, setModelDrawerAssertionId] = useState<string | null>(null);
   const [showSpatialZones, setShowSpatialZones] = useState(true);
+  const [spatialEditMode, setSpatialEditMode] = useState<"view" | "move-pins" | "draw-zone">("view");
+  const [selectedPinIds, setSelectedPinIds] = useState<string[]>([]);
+  const [zoneDraft, setZoneDraft] = useState<ZoneDraft | null>(null);
   const [placementAssertionId, setPlacementAssertionId] = useState<string | null>(null);
   const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -245,6 +251,7 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
 
   function changeModelMode(mode: ModelMode) {
     setModelMode(mode);
+    setSelectedPinIds([]);
     setModelDrawerEntityId(null);
     setModelDrawerAssertionId(null);
   }
@@ -311,10 +318,48 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
     }
   }
 
+  function startZoneDrawing() {
+    if (isStaticMode) {
+      setError("Zone drawing needs the private database connection.");
+      return;
+    }
+    setError(null);
+    setZoneDraft(null);
+    setShowSpatialZones(true);
+    setSpatialEditMode("draw-zone");
+  }
+
+  function receiveZoneDraft(draft: ZoneDraft) {
+    setZoneDraft(draft);
+    setSpatialEditMode("view");
+    setIsZoneModalOpen(true);
+  }
+
+  async function movePinsOnModel(moves: Array<{ id: string; mode: ModelMode; position: [number, number, number] }>) {
+    if (isStaticMode || moves.length === 0) return;
+    setError(null);
+    try {
+      const response = await fetch(apiUrl("/api/spatial"), {
+        method: "POST",
+        headers: apiHeaders,
+        body: JSON.stringify({ action: "move-pins", moves }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to move evidence pins.");
+      setTwin(payload as TwinPayload);
+    } catch (moveError) {
+      setError(moveError instanceof Error ? moveError.message : "Unable to move evidence pins.");
+    }
+  }
+
   async function submitZone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isStaticMode) {
       setError("GitHub Pages preview is read-only. Zone creation will be enabled after the standalone backend is connected.");
+      return;
+    }
+    if (!zoneDraft) {
+      setError("Draw the zone on the model before saving it.");
       return;
     }
     const form = new FormData(event.currentTarget);
@@ -326,12 +371,11 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
         body: JSON.stringify({
           action: "create-zone",
           name: form.get("name"),
-          mode: modelMode,
+          mode: zoneDraft.mode,
           zoneType: form.get("zoneType"),
-          geometryKind: form.get("geometryKind"),
+          geometryKind: "polygon",
           entityId: form.get("entityId") || null,
-          position: { x: Number(form.get("x")), y: Number(form.get("y")), z: Number(form.get("z")) },
-          size: { width: Number(form.get("width")), height: Number(form.get("height")), depth: Number(form.get("depth")) },
+          vertices: zoneDraft.vertices,
           color: form.get("color"),
         }),
       });
@@ -339,6 +383,7 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
       if (!response.ok) throw new Error(payload.error ?? "Unable to create zone.");
       setTwin(payload as TwinPayload);
       setIsZoneModalOpen(false);
+      setZoneDraft(null);
       setShowSpatialZones(true);
     } catch (zoneError) {
       setError(zoneError instanceof Error ? zoneError.message : "Unable to create zone.");
@@ -439,12 +484,17 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
             pins={modelPins}
             zones={twin.spatialZones}
             showZones={showSpatialZones}
+            spatialEditMode={spatialEditMode}
+            selectedPinIds={selectedPinIds}
             placementAssertionId={placementAssertionId}
             selectedEntityId={selectedEntityId}
             onModeChange={changeModelMode}
             onSelectEntity={setSelectedEntityId}
             onSelectPin={selectModelPin}
             onPlaceEvidence={placeEvidenceOnModel}
+            onChangeSelectedPinIds={setSelectedPinIds}
+            onMovePins={movePinsOnModel}
+            onDrawZone={receiveZoneDraft}
           />
           <aside className="model-index-panel" aria-label="Home model index">
             <span className="eyebrow">Physical record</span>
@@ -456,10 +506,14 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
             </div>
             <div className="spatial-tools">
               <button className={showSpatialZones ? "active" : ""} onClick={() => setShowSpatialZones((value) => !value)}><Layers3 size={14} /> Zones</button>
-              <button disabled={isStaticMode} onClick={() => setIsZoneModalOpen(true)}><Plus size={14} /> Create zone</button>
+              <button className={spatialEditMode === "draw-zone" ? "active" : ""} disabled={isStaticMode} onClick={() => spatialEditMode === "draw-zone" ? setSpatialEditMode("view") : startZoneDrawing()}><MousePointer2 size={14} /> Draw zone</button>
+              <button className={spatialEditMode === "move-pins" ? "active" : ""} disabled={isStaticMode} onClick={() => setSpatialEditMode((value) => value === "move-pins" ? "view" : "move-pins")}><Move size={14} /> Move pins</button>
+              {selectedPinIds.length > 0 && <button className="danger" onClick={() => setSelectedPinIds([])}><X size={14} /> Clear {selectedPinIds.length} pin{selectedPinIds.length === 1 ? "" : "s"}</button>}
               {placementAssertionId && <button className="danger" onClick={() => setPlacementAssertionId(null)}><X size={14} /> Cancel pin</button>}
             </div>
             {placementAssertionId && <p className="placement-note">Click a precise spot on the current 3D view to pin the selected evidence.</p>}
+            {spatialEditMode === "draw-zone" && <p className="placement-note">Click each boundary point. Double-click the last point to name and save the zone.</p>}
+            {spatialEditMode === "move-pins" && <p className="placement-note">Click a pin to select it. Shift-click additional pins, then drag any selected pin to move the group.</p>}
             <div className="system-evidence-index">
               <div className="model-panel-heading">
                 <span>System evidence</span>
@@ -884,30 +938,20 @@ export function TwinDashboard({ initialTwin, mode = "live", apiBaseUrl, apiToken
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setIsZoneModalOpen(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="zone-title">
             <div className="modal-header">
-              <div><span className="eyebrow">Spatial model</span><h2 id="zone-title">Create a zone</h2></div>
-              <button className="icon-button" title="Close" aria-label="Close" onClick={() => setIsZoneModalOpen(false)}><X size={19} /></button>
+              <div><span className="eyebrow">Spatial model</span><h2 id="zone-title">Name the drawn zone</h2></div>
+              <button className="icon-button" title="Close" aria-label="Close" onClick={() => { setIsZoneModalOpen(false); setZoneDraft(null); }}><X size={19} /></button>
             </div>
             <form onSubmit={submitZone}>
               <label>Zone name<input name="name" required placeholder="Rear left foundation" /></label>
               <div className="form-grid two">
-                <label>Zone type<select name="zoneType" defaultValue={modelMode === "exterior" ? "facade" : "room"}><option value="room">Room</option><option value="facade">Facade</option><option value="yard">Yard</option><option value="roof">Roof</option><option value="system-area">System area</option><option value="custom">Custom</option></select></label>
-                <label>Shape<select name="geometryKind" defaultValue={modelMode === "exterior" ? "box" : "box"}><option value="box">Box</option><option value="plane">Ground plane</option></select></label>
+                <label>Zone type<select name="zoneType" defaultValue={zoneDraft?.mode === "exterior" ? "facade" : "room"}><option value="room">Room</option><option value="facade">Facade</option><option value="yard">Yard</option><option value="roof">Roof</option><option value="system-area">System area</option><option value="custom">Custom</option></select></label>
+                <label>Drawn points<input value={zoneDraft?.vertices.length ?? 0} readOnly aria-label="Number of drawn zone points" /></label>
               </div>
               <label>Optional linked place<select name="entityId" defaultValue=""><option value="">No existing place</option>{locationEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label>
-              <div className="form-grid three">
-                <label>X<input name="x" type="number" step="0.1" defaultValue="0" /></label>
-                <label>Y<input name="y" type="number" step="0.1" defaultValue={modelMode === "exterior" ? "1" : "0.4"} /></label>
-                <label>Z<input name="z" type="number" step="0.1" defaultValue="0" /></label>
-              </div>
-              <div className="form-grid three">
-                <label>Width<input name="width" type="number" min="0.5" step="0.1" defaultValue="8" /></label>
-                <label>Height<input name="height" type="number" min="0.1" step="0.1" defaultValue={modelMode === "exterior" ? "5" : "0.9"} /></label>
-                <label>Depth<input name="depth" type="number" min="0.5" step="0.1" defaultValue="8" /></label>
-              </div>
               <label>Color<input name="color" type="color" defaultValue="#dfece5" /></label>
               {error && <p className="form-error">{error}</p>}
               <div className="modal-actions">
-                <button type="button" className="secondary-button" onClick={() => setIsZoneModalOpen(false)}>Cancel</button>
+                <button type="button" className="secondary-button" onClick={() => { setIsZoneModalOpen(false); setZoneDraft(null); }}>Cancel</button>
                 <button className="primary-button"><Plus size={16} /> Create zone</button>
               </div>
             </form>

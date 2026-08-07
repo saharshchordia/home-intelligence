@@ -24,12 +24,17 @@ type HouseModelProps = {
   pins: ModelPin[];
   zones: SpatialZone[];
   showZones: boolean;
+  spatialEditMode?: "view" | "move-pins" | "draw-zone";
+  selectedPinIds?: string[];
   placementAssertionId?: string | null;
   selectedEntityId: string;
   onModeChange(mode: ModelMode): void;
   onSelectEntity(entityId: string): void;
   onSelectPin(pin: ModelPin): void;
   onPlaceEvidence?(placement: { mode: ModelMode; position: [number, number, number]; entityId?: string | null; zoneId?: string | null }): void;
+  onChangeSelectedPinIds?(ids: string[]): void;
+  onMovePins?(moves: Array<{ id: string; mode: ModelMode; position: [number, number, number] }>): void;
+  onDrawZone?(draft: { mode: ModelMode; vertices: Array<[number, number, number]> }): void;
 };
 
 const toneColors = {
@@ -205,6 +210,27 @@ function buildExterior() {
 }
 
 function zoneMesh(zone: SpatialZone) {
+  if (zone.geometryKind === "polygon" && zone.vertices && zone.vertices.length >= 3) {
+    const shape = new THREE.Shape(zone.vertices.map(([x, , z]) => new THREE.Vector2(x, z)));
+    const geometry = new THREE.ShapeGeometry(shape);
+    geometry.rotateX(-Math.PI / 2);
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(zone.color), transparent: true, opacity: 0.34, roughness: 0.7, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.y = zone.y + 0.05;
+    mesh.userData.entityId = zone.entityId;
+    mesh.userData.zoneId = zone.id;
+    mesh.userData.clickable = true;
+    mesh.userData.spatialZone = true;
+    addEdges(mesh, 0x214c3c);
+    const sprite = labelSprite(zone.name);
+    if (sprite) {
+      sprite.position.set(zone.x, 1.3, zone.z);
+      mesh.add(sprite);
+    }
+    return mesh;
+  }
   const geometry = new THREE.BoxGeometry(zone.width, Math.max(zone.height, 0.08), zone.depth);
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color(zone.color),
@@ -239,7 +265,7 @@ function buildGaragePlan() {
   return group;
 }
 
-export default function HouseModel({ mode, pins, zones, showZones, placementAssertionId, selectedEntityId, onModeChange, onSelectEntity, onSelectPin, onPlaceEvidence }: HouseModelProps) {
+export default function HouseModel({ mode, pins, zones, showZones, spatialEditMode = "view", selectedPinIds = [], placementAssertionId, selectedEntityId, onModeChange, onSelectEntity, onSelectPin, onPlaceEvidence, onChangeSelectedPinIds, onMovePins, onDrawZone }: HouseModelProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const pinLayerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -253,6 +279,13 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
   const showZonesRef = useRef(showZones);
   const placementAssertionIdRef = useRef(placementAssertionId);
   const onPlaceEvidenceRef = useRef(onPlaceEvidence);
+  const spatialEditModeRef = useRef(spatialEditMode);
+  const selectedPinIdsRef = useRef(selectedPinIds);
+  const onChangeSelectedPinIdsRef = useRef(onChangeSelectedPinIds);
+  const onMovePinsRef = useRef(onMovePins);
+  const onDrawZoneRef = useRef(onDrawZone);
+  const pinPointerDownRef = useRef<((event: PointerEvent, pin: ModelPin) => void) | null>(null);
+  const pinClickHandledRef = useRef(false);
   const selectedRef = useRef(selectedEntityId);
   const onSelectEntityRef = useRef(onSelectEntity);
   const visiblePins = useMemo(() => pins.filter((pin) => pin.mode === mode), [mode, pins]);
@@ -262,6 +295,11 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
   useEffect(() => { showZonesRef.current = showZones; }, [showZones]);
   useEffect(() => { placementAssertionIdRef.current = placementAssertionId; }, [placementAssertionId]);
   useEffect(() => { onPlaceEvidenceRef.current = onPlaceEvidence; }, [onPlaceEvidence]);
+  useEffect(() => { spatialEditModeRef.current = spatialEditMode; }, [spatialEditMode]);
+  useEffect(() => { selectedPinIdsRef.current = selectedPinIds; }, [selectedPinIds]);
+  useEffect(() => { onChangeSelectedPinIdsRef.current = onChangeSelectedPinIds; }, [onChangeSelectedPinIds]);
+  useEffect(() => { onMovePinsRef.current = onMovePins; }, [onMovePins]);
+  useEffect(() => { onDrawZoneRef.current = onDrawZone; }, [onDrawZone]);
   useEffect(() => { onSelectEntityRef.current = onSelectEntity; }, [onSelectEntity]);
 
   useEffect(() => {
@@ -292,6 +330,23 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
     if (!zoneGroups) return;
     for (const [id, group] of Object.entries(zoneGroups)) group.visible = id === modeRef.current && showZones;
   }, [showZones]);
+
+  useEffect(() => {
+    const zoneGroups = zoneGroupsRef.current;
+    if (!zoneGroups) return;
+    for (const group of Object.values(zoneGroups)) {
+      while (group.children.length) {
+        const child = group.children.pop();
+        child?.traverse((object) => {
+          if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) object.geometry.dispose();
+          const material = "material" in object ? object.material : null;
+          if (Array.isArray(material)) material.forEach((item) => item.dispose());
+          else if (material instanceof THREE.Material) material.dispose();
+        });
+      }
+    }
+    for (const zone of zones) zoneGroups[zone.mode].add(zoneMesh(zone));
+  }, [zones]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -364,6 +419,12 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let pointerStart = { x: 0, y: 0 };
+    let drag: { ids: string[]; planeY: number; start: THREE.Vector3; initial: Map<string, [number, number, number]>; preview: Map<string, [number, number, number]> } | null = null;
+    let zoneDraft: { points: Array<[number, number, number]>; hover: [number, number, number] | null } | null = null;
+    const draftLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0x214c3c, dashSize: 0.65, gapSize: 0.35 }));
+    draftLine.visible = false;
+    draftLine.renderOrder = 12;
+    scene.add(draftLine);
     const setPointer = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -374,8 +435,52 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
       raycaster.setFromCamera(pointer, camera);
       return raycaster.intersectObjects(scene.children, true).filter((hit) => hit.object.userData.clickable);
     };
-    const onPointerDown = (event: PointerEvent) => { pointerStart = { x: event.clientX, y: event.clientY }; };
+    const pointOnPlane = (event: PointerEvent, y: number) => {
+      setPointer(event);
+      raycaster.setFromCamera(pointer, camera);
+      const point = new THREE.Vector3();
+      return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), point);
+    };
+    const zonePlaneY = () => modeRef.current === "exterior" ? 0.12 : 0.82;
+    const redrawZoneDraft = () => {
+      if (!zoneDraft) {
+        draftLine.visible = false;
+        return;
+      }
+      const points = [...zoneDraft.points, ...(zoneDraft.hover ? [zoneDraft.hover] : [])].map(([x, y, z]) => new THREE.Vector3(x, y + 0.08, z));
+      if (points.length > 2) points.push(points[0].clone());
+      draftLine.geometry.dispose();
+      draftLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+      draftLine.computeLineDistances();
+      draftLine.visible = points.length > 1;
+    };
+    const finishZoneDraft = () => {
+      if (!zoneDraft || zoneDraft.points.length < 3) return;
+      const vertices = zoneDraft.points;
+      zoneDraft = null;
+      redrawZoneDraft();
+      controls.enabled = true;
+      onDrawZoneRef.current?.({ mode: modeRef.current, vertices });
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      pointerStart = { x: event.clientX, y: event.clientY };
+      if (spatialEditModeRef.current === "draw-zone") event.preventDefault();
+    };
     const onPointerUp = (event: PointerEvent) => {
+      if (spatialEditModeRef.current === "draw-zone") {
+        if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
+        const point = pointOnPlane(event, zonePlaneY());
+        if (!point) return;
+        const vertex: [number, number, number] = [Number(point.x.toFixed(2)), Number(point.y.toFixed(2)), Number(point.z.toFixed(2))];
+        if (!zoneDraft) {
+          zoneDraft = { points: [vertex], hover: null };
+          controls.enabled = false;
+        } else if (Math.hypot(vertex[0] - zoneDraft.points.at(-1)![0], vertex[2] - zoneDraft.points.at(-1)![2]) > 0.25) {
+          zoneDraft.points.push(vertex);
+        }
+        redrawZoneDraft();
+        return;
+      }
       if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
       const hit = intersections(event)[0];
       if (placementAssertionIdRef.current && hit) {
@@ -392,11 +497,68 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
       if (entityId) onSelectEntityRef.current(entityId);
     };
     const onPointerMove = (event: PointerEvent) => {
+      if (zoneDraft && spatialEditModeRef.current === "draw-zone") {
+        const point = pointOnPlane(event, zonePlaneY());
+        zoneDraft.hover = point ? [Number(point.x.toFixed(2)), Number(point.y.toFixed(2)), Number(point.z.toFixed(2))] : null;
+        redrawZoneDraft();
+        renderer.domElement.style.cursor = "crosshair";
+        return;
+      }
       renderer.domElement.style.cursor = intersections(event).length > 0 ? "pointer" : "grab";
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      if (spatialEditModeRef.current !== "draw-zone") return;
+      event.preventDefault();
+      finishZoneDraft();
+    };
+    const onWindowPointerMove = (event: PointerEvent) => {
+      if (!drag) return;
+      const point = pointOnPlane(event, drag.planeY);
+      if (!point) return;
+      const delta = point.clone().sub(drag.start);
+      drag.preview = new Map([...drag.initial].map(([id, position]) => [id, [
+        Number((position[0] + delta.x).toFixed(2)), position[1], Number((position[2] + delta.z).toFixed(2)),
+      ]] as [string, [number, number, number]]));
+      renderer.domElement.style.cursor = "grabbing";
+    };
+    const onWindowPointerUp = () => {
+      if (!drag) return;
+      const moved = [...drag.preview].some(([id, position]) => {
+        const initial = drag?.initial.get(id)!;
+        return Math.hypot(position[0] - initial[0], position[2] - initial[2]) > 0.05;
+      });
+      if (moved) {
+        pinClickHandledRef.current = true;
+        onMovePinsRef.current?.([...drag.preview].map(([id, position]) => ({ id, mode: modeRef.current, position })));
+      }
+      drag = null;
+      controls.enabled = true;
+    };
+    pinPointerDownRef.current = (event, pin) => {
+      if (spatialEditModeRef.current !== "move-pins" || pin.kind !== "evidence") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const selected = selectedPinIdsRef.current;
+      if (event.shiftKey) {
+        pinClickHandledRef.current = true;
+        onChangeSelectedPinIdsRef.current?.(selected.includes(pin.id) ? selected.filter((id) => id !== pin.id) : [...selected, pin.id]);
+        return;
+      }
+      const ids = selected.includes(pin.id) ? selected : [pin.id];
+      if (!selected.includes(pin.id)) onChangeSelectedPinIdsRef.current?.(ids);
+      const start = pointOnPlane(event, pin.position[1]);
+      if (!start) return;
+      const initial = new Map(pinsRef.current.filter((item) => ids.includes(item.id)).map((item) => [item.id, item.position]));
+      if (initial.size === 0) return;
+      drag = { ids, planeY: pin.position[1], start, initial, preview: new Map(initial) };
+      controls.enabled = false;
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointermove", onPointerMove, { passive: true });
+    renderer.domElement.addEventListener("dblclick", onDoubleClick);
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
 
     const resize = () => {
       const width = Math.max(mount.clientWidth, 1);
@@ -421,7 +583,8 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
         for (const pin of pinsRef.current) {
           const element = layer.querySelector<HTMLElement>(`[data-pin-id="${pin.id}"]`);
           if (!element || pin.mode !== modeRef.current) continue;
-          projected.set(...pin.position).project(camera);
+          const position = drag?.preview.get(pin.id) ?? pin.position;
+          projected.set(...position).project(camera);
           const visible = projected.z > -1 && projected.z < 1;
           element.style.display = visible ? "grid" : "none";
           if (visible) element.style.transform = `translate3d(${(projected.x * 0.5 + 0.5) * rect.width}px, ${(-projected.y * 0.5 + 0.5) * rect.height}px, 0) translate(-50%, -50%)`;
@@ -438,6 +601,10 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("dblclick", onDoubleClick);
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      pinPointerDownRef.current = null;
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) object.geometry.dispose();
         const material = "material" in object ? object.material : null;
@@ -462,10 +629,17 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
           <button
             key={pin.id}
             data-pin-id={pin.id}
-            className={`model-pin ${pin.severity} ${pin.kind === "evidence" ? "evidence-pin" : ""}`}
+            className={`model-pin ${pin.severity} ${pin.kind === "evidence" ? "evidence-pin" : ""} ${selectedPinIds.includes(pin.id) ? "selected" : ""}`}
             aria-label={pin.kind === "evidence" ? `Evidence pin for ${pin.label}` : `${pin.count} accepted ${pin.count === 1 ? "finding" : "findings"} at ${pin.label}`}
             title={pin.label}
-            onClick={() => onSelectPin(pin)}
+            onPointerDown={(event) => pinPointerDownRef.current?.(event.nativeEvent, pin)}
+            onClick={() => {
+              if (pinClickHandledRef.current) {
+                pinClickHandledRef.current = false;
+                return;
+              }
+              onSelectPin(pin);
+            }}
           >
             <span>{pin.kind === "evidence" ? "•" : pin.count}</span>
           </button>
@@ -479,7 +653,7 @@ export default function HouseModel({ mode, pins, zones, showZones, placementAsse
           </button>
         ))}
       </div>
-      <div className="model-status"><Focus size={14} /> {placementAssertionId ? "Click the model to place evidence" : showZones ? "Spatial zones visible" : "Report-derived geometry"}</div>
+      <div className="model-status"><Focus size={14} /> {placementAssertionId ? "Click the model to place evidence" : spatialEditMode === "draw-zone" ? "Click points, then double-click to finish a zone" : spatialEditMode === "move-pins" ? "Shift-click pins to select, then drag the selection" : showZones ? "Spatial zones visible" : "Report-derived geometry"}</div>
       <div className="orbit-status" aria-hidden="true"><Rotate3D size={14} /></div>
     </div>
   );

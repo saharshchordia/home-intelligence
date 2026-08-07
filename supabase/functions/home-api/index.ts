@@ -191,6 +191,7 @@ async function readTwin(db: Db) {
       width: Number(row.width),
       height: Number(row.height),
       depth: Number(row.depth),
+      vertices: Array.isArray(row.vertices) ? row.vertices : [],
       color: row.color,
       status: row.status,
       createdAt: row.created_at,
@@ -333,6 +334,22 @@ async function updateSpatial(db: Db, request: Request) {
     return json(await readTwin(db));
   }
   if (payload.action === "create-zone") {
+    const vertices = Array.isArray(payload.vertices)
+      ? payload.vertices
+        .map((vertex: unknown) => Array.isArray(vertex) && vertex.length === 3
+          ? vertex.map((value) => Number(value))
+          : null)
+        .filter((vertex: unknown): vertex is number[] => Array.isArray(vertex) && vertex.every(Number.isFinite))
+      : [];
+    if (!payload.name || !payload.mode || (payload.geometryKind === "polygon" && vertices.length < 3)) {
+      return fail("A zone name, model view, and at least three points are required.");
+    }
+    const xs = vertices.map((vertex: number[]) => vertex[0]);
+    const ys = vertices.map((vertex: number[]) => vertex[1]);
+    const zs = vertices.map((vertex: number[]) => vertex[2]);
+    const min = (values: number[], fallback: number) => values.length ? Math.min(...values) : fallback;
+    const max = (values: number[], fallback: number) => values.length ? Math.max(...values) : fallback;
+    const center = (values: number[], fallback: number) => (min(values, fallback) + max(values, fallback)) / 2;
     const { error } = await db.from("spatial_zones").insert({
       id: `zone-${crypto.randomUUID()}`,
       home_id: homeId,
@@ -341,18 +358,74 @@ async function updateSpatial(db: Db, request: Request) {
       mode: payload.mode,
       zone_type: payload.zoneType ?? "custom",
       geometry_kind: payload.geometryKind ?? "box",
-      x: Number(payload.position?.x ?? 0),
-      y: Number(payload.position?.y ?? 0.4),
-      z: Number(payload.position?.z ?? 0),
-      width: Number(payload.size?.width ?? 8),
-      height: Number(payload.size?.height ?? 3),
-      depth: Number(payload.size?.depth ?? 8),
+      x: center(xs, Number(payload.position?.x ?? 0)),
+      y: center(ys, Number(payload.position?.y ?? 0.4)),
+      z: center(zs, Number(payload.position?.z ?? 0)),
+      width: Math.max(0.5, max(xs, 0) - min(xs, 0) || Number(payload.size?.width ?? 8)),
+      height: Number(payload.size?.height ?? (payload.geometryKind === "polygon" ? 0.12 : 3)),
+      depth: Math.max(0.5, max(zs, 0) - min(zs, 0) || Number(payload.size?.depth ?? 8)),
+      vertices,
       color: payload.color ?? "#dfece5",
       status: "active",
       created_at: now,
     });
     if (error) throw error;
     return json(await readTwin(db), 201);
+  }
+  if (payload.action === "move-pins") {
+    const moves = Array.isArray(payload.moves) ? payload.moves : [];
+    if (moves.length === 0) return fail("Select at least one evidence pin to move.");
+    const { data: zoneRows, error: zoneError } = await db.from("spatial_zones")
+      .select("id,entity_id,mode,geometry_kind,x,y,z,width,height,depth,vertices")
+      .eq("home_id", homeId);
+    if (zoneError) throw zoneError;
+    const containsPoint = (zone: Record<string, unknown>, position: number[]) => {
+      if (zone.geometry_kind === "polygon" && Array.isArray(zone.vertices)) {
+        const vertices = zone.vertices.filter(Array.isArray) as number[][];
+        let inside = false;
+        for (let index = 0, prior = vertices.length - 1; index < vertices.length; prior = index++) {
+          const [x1, , z1] = vertices[index];
+          const [x2, , z2] = vertices[prior];
+          if ((z1 > position[2]) !== (z2 > position[2]) && position[0] < ((x2 - x1) * (position[2] - z1)) / (z2 - z1) + x1) inside = !inside;
+        }
+        return inside;
+      }
+      return Math.abs(position[0] - Number(zone.x)) <= Number(zone.width) / 2
+        && Math.abs(position[1] - Number(zone.y)) <= Number(zone.height) / 2 + 0.5
+        && Math.abs(position[2] - Number(zone.z)) <= Number(zone.depth) / 2;
+    };
+    for (const move of moves) {
+      const position = Array.isArray(move?.position) ? move.position.map(Number) : [];
+      if (!move?.id || position.length !== 3 || !position.every(Number.isFinite)) return fail("Each pin move needs a valid three-dimensional point.");
+      const mode = String(move.mode ?? "");
+      const matches = (zoneRows ?? []).filter((zone) => zone.mode === mode && containsPoint(zone, position));
+      const zone = matches.sort((left, right) => Number(left.width) * Number(left.height) * Number(left.depth) - Number(right.width) * Number(right.height) * Number(right.depth))[0];
+      const { data: pin, error: pinError } = await db.from("evidence_pins").select("assertion_id").eq("id", move.id).single();
+      if (pinError) throw pinError;
+      const { error: updateError } = await db.from("evidence_pins").update({
+        mode,
+        x: position[0], y: position[1], z: position[2],
+        zone_id: zone?.id ?? null,
+        entity_id: zone?.entity_id ?? null,
+        confidence: 1,
+        status: "approved",
+        rationale: "Precise model location manually positioned by homeowner review.",
+      }).eq("id", move.id);
+      if (updateError) throw updateError;
+      if (zone?.entity_id) {
+        const { error: linkError } = await db.from("assertion_entities").upsert({
+          assertion_id: pin.assertion_id,
+          entity_id: zone.entity_id,
+          relationship: "spatial-pin",
+          confidence: 1,
+          status: "approved",
+          rationale: "Location confirmed by manual evidence-pin placement on the home model.",
+          reviewed_at: now,
+        });
+        if (linkError) throw linkError;
+      }
+    }
+    return json(await readTwin(db));
   }
   return fail("Unsupported spatial action.");
 }

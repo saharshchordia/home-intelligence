@@ -112,13 +112,14 @@ export type SpatialZone = {
   name: string;
   mode: "exterior" | "first" | "second" | "lower" | "garage";
   zoneType: "room" | "facade" | "yard" | "roof" | "system-area" | "custom";
-  geometryKind: "box" | "plane";
+  geometryKind: "box" | "plane" | "polygon";
   x: number;
   y: number;
   z: number;
   width: number;
   height: number;
   depth: number;
+  vertices?: Array<[number, number, number]>;
   color: string;
   status: "active" | "draft";
   createdAt: string;

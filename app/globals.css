@@ -66,6 +66,7 @@ button { color: inherit; }
 .model-pin.evidence-pin::after { bottom: -5px; width: 6px; height: 6px; }
 .model-pin.evidence-pin span { margin-top: -5px; font-size: 18px; line-height: 1; }
 .model-pin:hover, .model-pin:focus-visible { outline: 3px solid rgba(255,255,255,.7); transform-origin: center; }
+.model-pin.selected { outline: 3px solid #214c3c; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(223,236,229,.95), 0 4px 14px rgba(24,32,28,.28); }
 .model-toolbar { position: absolute; z-index: 6; left: 24px; bottom: 22px; display: flex; max-width: calc(100% - 48px); overflow-x: auto; border: 1px solid rgba(77,88,81,.22); border-radius: 7px; background: rgba(255,255,255,.94); box-shadow: 0 8px 28px rgba(24,32,28,.16); }
 .model-toolbar button { flex: 0 0 auto; min-width: 92px; height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 650; }
 .model-toolbar button:last-child { border-right: 0; }
