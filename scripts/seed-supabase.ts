@@ -171,6 +171,7 @@ async function main() {
     width: zone.width,
     height: zone.height,
     depth: zone.depth,
+    vertices: zone.vertices ?? [],
     color: zone.color,
     status: zone.status,
     created_at: zone.createdAt,
