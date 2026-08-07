@@ -183,12 +183,13 @@ function buildExterior() {
   group.add(chimney);
 
   const garage = new THREE.Mesh(new THREE.BoxGeometry(11, 7, 19), wallMaterial);
-  garage.position.set(28, 3.5, 4);
+  // The garage front aligns with the rear face of the main house.
+  garage.position.set(28, 3.5, -35.75);
   garage.userData.entityId = "garage";
   garage.userData.clickable = true;
   garage.castShadow = true;
   addEdges(garage);
-  group.add(garage, roofPlane(8, 20, 25.3, 9, 4, Math.PI / 5), roofPlane(8, 20, 30.7, 9, 4, -Math.PI / 5));
+  group.add(garage, roofPlane(8, 20, 25.3, 9, -35.75, Math.PI / 5), roofPlane(8, 20, 30.7, 9, -35.75, -Math.PI / 5));
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(115, 130),
@@ -200,11 +201,11 @@ function buildExterior() {
   group.add(ground);
 
   const driveway = new THREE.Mesh(
-    new THREE.PlaneGeometry(13, 74),
+    new THREE.PlaneGeometry(13, 86),
     new THREE.MeshStandardMaterial({ color: 0x8b8580, roughness: 1 }),
   );
   driveway.rotation.x = -Math.PI / 2;
-  driveway.position.set(27, 0.02, 22);
+  driveway.position.set(27, 0.02, 16.5);
   group.add(driveway);
   return group;
 }
